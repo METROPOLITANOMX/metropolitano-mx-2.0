@@ -101,13 +101,16 @@ class MainActivity : ComponentActivity() {
                             modifier = Modifier
                                 .align(Alignment.BottomCenter)
                                 .padding(16.dp),
+                            containerColor = androidx.compose.material3.MaterialTheme.colorScheme.surfaceVariant,
+                            contentColor = androidx.compose.material3.MaterialTheme.colorScheme.onSurface,
+                            actionContentColor = androidx.compose.material3.MaterialTheme.colorScheme.primary,
                             action = {
                                 TextButton(onClick = { vm.clearBannerMessage() }) {
-                                    Text("OK")
+                                    Text("OK", color = androidx.compose.material3.MaterialTheme.colorScheme.primary)
                                 }
                             }
                         ) {
-                            Text(msg)
+                            Text(msg, color = androidx.compose.material3.MaterialTheme.colorScheme.onSurface)
                         }
                     }
                 }

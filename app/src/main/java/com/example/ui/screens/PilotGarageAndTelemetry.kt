@@ -37,13 +37,11 @@ import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.Slider
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.minimumInteractiveComponentSize
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -65,8 +63,11 @@ import com.example.engine.CardExporter
 import com.example.i18n.MxStrings
 import com.example.ui.components.Base64ImageView
 import com.example.ui.components.GlassRaceCard
+import com.example.ui.components.LapTelemetryChartCard
+import com.example.ui.components.RiderDorsalBadge
 import com.example.ui.components.SurfaceBadge
 import com.example.ui.theme.LocalMxColors
+import com.example.ui.theme.contrastTextOn
 import com.example.ui.viewmodel.MxProViewModel
 import com.example.ui.viewmodel.MxUiState
 import java.io.ByteArrayOutputStream
@@ -113,12 +114,14 @@ fun PilotGarageProTab(
             Text(strings.tabGaragePro, style = MaterialTheme.typography.headlineMedium)
             Button(
                 onClick = {
-                    editingBike = BikeSetup(
-                        id = "b_${UUID.randomUUID().toString().take(8)}",
-                        discipline = state.activeCircuit.surface,
-                        modelName = if (state.activeCircuit.surface == SurfaceType.SM) "Losi Promoto-SM" else "Losi Promoto-MX"
+                    editingBike = BikeSetup.defaultsFor(state.activeCircuit.surface).copy(
+                        id = "b_${UUID.randomUUID().toString().take(8)}"
                     )
                 },
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = mx.goldAccent,
+                    contentColor = contrastTextOn(mx.goldAccent)
+                ),
                 modifier = Modifier.minimumInteractiveComponentSize().testTag("garage_add_bike")
             ) {
                 Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(18.dp))
@@ -190,28 +193,99 @@ fun PilotGarageProTab(
                         }
                     }
 
-                    // Maintenance progress bars
-                    val chainUsed = (activeBike.totalLaps - activeBike.chainMaintAtLaps).coerceAtLeast(0)
-                    val gyroUsed = (activeBike.totalLaps - activeBike.gyroMaintAtLaps).coerceAtLeast(0)
+                    // 3-Section Pro Setup Summary
                     Text(
-                        if (strings.isSpanish) "Mantenimiento Cadena ($chainUsed / 80 laps)" else "Chain Service ($chainUsed / 80 laps)",
-                        style = MaterialTheme.typography.labelSmall
+                        if (strings.isSpanish) "1. Suspensión y Geometría" else "1. Suspension & Geometry",
+                        style = MaterialTheme.typography.labelLarge,
+                        color = mx.goldAccent
                     )
-                    LinearProgressIndicator(progress = { (chainUsed / 80f).coerceIn(0f, 1f) }, modifier = Modifier.fillMaxWidth())
                     Text(
-                        if (strings.isSpanish) "Servicio Gyro MS6X ($gyroUsed / 150 laps)" else "Gyro MS6X Service ($gyroUsed / 150 laps)",
-                        style = MaterialTheme.typography.labelSmall
-                    )
-                    LinearProgressIndicator(progress = { (gyroUsed / 150f).coerceIn(0f, 1f) }, modifier = Modifier.fillMaxWidth())
-
-                    // Complete setup sheet
-                    Text(
-                        "${if (strings.isSpanish) "Terreno" else "Terrain"}: ${activeBike.terrain}\n" +
-                            "${if (strings.isSpanish) "Horquilla" else "Fork"}: ${activeBike.forkOil} | ${if (strings.isSpanish) "Amortiguador" else "Shock"}: ${activeBike.shockOil}\n" +
-                            "${if (strings.isSpanish) "Piñón/Corona" else "Gearing"}: ${activeBike.pinionSpur} | ${if (strings.isSpanish) "Neumáticos" else "Tires"}: ${activeBike.tires}\n" +
-                            "Gyro MS6X: ${activeBike.gyroPercent}%",
+                        "${activeBike.terrain} • Horquilla: ${activeBike.forkOil} (${activeBike.forkSpring}) • " +
+                            "Amort.: ${activeBike.shockOil} (${activeBike.shockSpring}) • SAG ${activeBike.rearSagMm} • " +
+                            "Lean: ${activeBike.leanBarSetting} • Freno Del. ${activeBike.frontBrakePercent}%",
                         style = MaterialTheme.typography.bodyMedium
                     )
+
+                    Text(
+                        if (strings.isSpanish) "2. Electrónica Spektrum MS6X y Firma 85A" else "2. Spektrum MS6X & Firma 85A",
+                        style = MaterialTheme.typography.labelLarge,
+                        color = mx.smBadge
+                    )
+                    Text(
+                        "MS6X: ${activeBike.gyroPercent}% (${activeBike.gyroMode}) • Punch ${activeBike.escPunch}/9 • " +
+                            "Drag Brake ${activeBike.escDragBrake}% • Max Freno ${activeBike.escMaxBrake}% • Cutoff ${activeBike.lipoCutoff}",
+                        style = MaterialTheme.typography.bodyMedium
+                    )
+
+                    Text(
+                        if (strings.isSpanish) "3. Desarrollo y Neumáticos" else "3. Gearing & Tires",
+                        style = MaterialTheme.typography.labelLarge,
+                        color = mx.telemetryGreen
+                    )
+                    Text(
+                        "${activeBike.effectivePinionSpur()} • Del: ${activeBike.frontTire} / Tras: ${activeBike.rearTire} (${activeBike.tireInsert})",
+                        style = MaterialTheme.typography.bodyMedium
+                    )
+                    if (activeBike.notes.isNotBlank()) {
+                        Text(activeBike.notes, style = MaterialTheme.typography.labelMedium, color = mx.subtleText)
+                    }
+
+                    // LiPo Cycles & 4 Mechanical Maintenance Bars with Quick Resets
+                    GlassRaceCard(accentBorder = mx.glassBorder) {
+                        Column(modifier = Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Column {
+                                    Text(
+                                        if (strings.isSpanish) "Batería LiPo y Ciclos" else "LiPo Pack & Cycles",
+                                        style = MaterialTheme.typography.labelLarge,
+                                        color = mx.goldBright
+                                    )
+                                    Text(
+                                        "${activeBike.lipoSpecs} • ${activeBike.lipoCycles} ${if (strings.isSpanish) "ciclos" else "cycles"}",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = mx.subtleText
+                                    )
+                                }
+                                OutlinedButton(onClick = { viewModel.incrementLipoCycle(activeBike) }) {
+                                    Text(if (strings.isSpanish) "+1 Ciclo LiPo" else "+1 LiPo Cycle")
+                                }
+                            }
+
+                            val chainUsed = (activeBike.totalLaps - activeBike.chainMaintAtLaps).coerceAtLeast(0)
+                            val gyroUsed = (activeBike.totalLaps - activeBike.gyroMaintAtLaps).coerceAtLeast(0)
+                            val forkUsed = (activeBike.totalLaps - activeBike.forkMaintAtLaps).coerceAtLeast(0)
+                            val bearingUsed = (activeBike.totalLaps - activeBike.bearingMaintAtLaps).coerceAtLeast(0)
+                            val checks = listOf(
+                                Triple(if (strings.isSpanish) "Cadena ($chainUsed/80v)" else "Chain ($chainUsed/80)", chainUsed / 80f, "CHAIN"),
+                                Triple(if (strings.isSpanish) "Gyro MS6X ($gyroUsed/150v)" else "Gyro ($gyroUsed/150)", gyroUsed / 150f, "GYRO"),
+                                Triple(if (strings.isSpanish) "Aceite Horquilla ($forkUsed/120v)" else "Fork Oil ($forkUsed/120)", forkUsed / 120f, "FORK"),
+                                Triple(if (strings.isSpanish) "Rodamientos ($bearingUsed/200v)" else "Bearings ($bearingUsed/200)", bearingUsed / 200f, "BEARINGS")
+                            )
+                            checks.forEach { (label, frac, key) ->
+                                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                    Column(modifier = Modifier.weight(1f)) {
+                                        Text(
+                                            label,
+                                            style = MaterialTheme.typography.labelSmall,
+                                            color = if (frac >= 0.95f) mx.racingRed else MaterialTheme.colorScheme.onSurface
+                                        )
+                                        LinearProgressIndicator(
+                                            progress = { frac.coerceIn(0f, 1f) },
+                                            color = if (frac >= 0.95f) mx.racingRed else mx.telemetryGreen,
+                                            modifier = Modifier.fillMaxWidth()
+                                        )
+                                    }
+                                    TextButton(onClick = { viewModel.resetBikeMaintenance(activeBike, key) }) {
+                                        Text(if (strings.isSpanish) "OK" else "Log")
+                                    }
+                                }
+                            }
+                        }
+                    }
 
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
                         Button(
@@ -225,6 +299,7 @@ fun PilotGarageProTab(
                             Spacer(Modifier.width(4.dp))
                             Text(strings.shareWhatsApp, maxLines = 1)
                         }
+                        val paddockColor = if (activeBike.publishedToPaddock) mx.telemetryGreen else mx.smBadge
                         Button(
                             onClick = {
                                 viewModel.saveBikeSetup(
@@ -233,7 +308,8 @@ fun PilotGarageProTab(
                                 )
                             },
                             colors = ButtonDefaults.buttonColors(
-                                containerColor = if (activeBike.publishedToPaddock) mx.telemetryGreen else mx.smBadge
+                                containerColor = paddockColor,
+                                contentColor = contrastTextOn(paddockColor)
                             ),
                             modifier = Modifier.weight(1f).minimumInteractiveComponentSize()
                         ) {
@@ -275,7 +351,7 @@ fun PilotGarageProTab(
     }
 
     editingBike?.let { bike ->
-        BikeEditDialog(
+        ProBikeSetupDialog(
             bike = bike,
             strings = strings,
             onDismiss = { editingBike = null },
@@ -310,64 +386,6 @@ fun PilotGarageProTab(
 }
 
 @Composable
-private fun BikeEditDialog(
-    bike: BikeSetup,
-    strings: MxStrings,
-    onDismiss: () -> Unit,
-    onSave: (BikeSetup) -> Unit
-) {
-    var discipline by remember { mutableStateOf(bike.discipline) }
-    var model by remember { mutableStateOf(bike.modelName) }
-    var dorsal by remember { mutableStateOf(bike.dorsal) }
-    var terrain by remember { mutableStateOf(bike.terrain) }
-    var forkOil by remember { mutableStateOf(bike.forkOil) }
-    var shockOil by remember { mutableStateOf(bike.shockOil) }
-    var pinionSpur by remember { mutableStateOf(bike.pinionSpur) }
-    var tires by remember { mutableStateOf(bike.tires) }
-    var gyro by remember { mutableIntStateOf(bike.gyroPercent) }
-
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Text(if (strings.isSpanish) "Configurar Moto y Reglaje" else "Configure Bike & Setup") },
-        text = {
-            Column(modifier = Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    FilterChip(selected = discipline == SurfaceType.MX, onClick = { discipline = SurfaceType.MX }, label = { Text("MX Tierra") })
-                    FilterChip(selected = discipline == SurfaceType.SM, onClick = { discipline = SurfaceType.SM }, label = { Text("SM Asfalto") })
-                }
-                OutlinedTextField(value = model, onValueChange = { model = it }, label = { Text("Modelo") }, singleLine = true)
-                OutlinedTextField(value = dorsal, onValueChange = { dorsal = it }, label = { Text("Dorsal") }, singleLine = true)
-                OutlinedTextField(value = terrain, onValueChange = { terrain = it }, label = { Text("Terreno") }, singleLine = true)
-                OutlinedTextField(value = forkOil, onValueChange = { forkOil = it }, label = { Text("Aceite Horquilla") }, singleLine = true)
-                OutlinedTextField(value = shockOil, onValueChange = { shockOil = it }, label = { Text("Amortiguador") }, singleLine = true)
-                OutlinedTextField(value = pinionSpur, onValueChange = { pinionSpur = it }, label = { Text("Piñón / Corona") }, singleLine = true)
-                OutlinedTextField(value = tires, onValueChange = { tires = it }, label = { Text("Neumáticos") }, singleLine = true)
-                Text("Gyro / MS6X: $gyro%")
-                Slider(value = gyro.toFloat(), onValueChange = { gyro = it.toInt() }, valueRange = 0f..100f)
-            }
-        },
-        confirmButton = {
-            Button(onClick = {
-                onSave(
-                    bike.copy(
-                        discipline = discipline,
-                        modelName = model,
-                        dorsal = dorsal,
-                        terrain = terrain,
-                        forkOil = forkOil,
-                        shockOil = shockOil,
-                        pinionSpur = pinionSpur,
-                        tires = tires,
-                        gyroPercent = gyro
-                    )
-                )
-            }) { Text(if (strings.isSpanish) "Guardar" else "Save") }
-        },
-        dismissButton = { TextButton(onClick = onDismiss) { Text(if (strings.isSpanish) "Cancelar" else "Cancel") } }
-    )
-}
-
-@Composable
 fun PilotTelemetryTab(
     state: MxUiState,
     strings: MxStrings
@@ -388,16 +406,27 @@ fun PilotTelemetryTab(
     ) {
         if (rider != null) {
             val rank = computeRankTitle(rider.totalLaps, strings.isSpanish)
+            val colorProf = state.colorProfiles.firstOrNull { it.riderId == rider.id }
             GlassRaceCard(accentBorder = mx.goldAccent.copy(alpha = 0.6f)) {
                 Column(modifier = Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                     Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-                        Text(rider.name, style = MaterialTheme.typography.headlineMedium)
+                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            RiderDorsalBadge(
+                                dorsal = state.activeBike?.dorsal ?: "01",
+                                discipline = rider.preferredSurface,
+                                colorProfile = colorProf
+                            )
+                            Text(rider.name, style = MaterialTheme.typography.headlineMedium)
+                        }
                         Text(rank, style = MaterialTheme.typography.titleMedium, color = mx.goldAccent)
                     }
                     Text("${strings.bestLap}: ${formatLapMs(rider.bestLapMs)}  •  ${strings.regularity}: ${String.format("%.1f", rider.regularityIndex)}%")
                     Text("${strings.totalLaps}: ${rider.totalLaps}  •  ${String.format("%.1f", rider.avgSpeedKmh)} km/h")
                 }
             }
+
+            // Visual Lap Time & Speed Telemetry Chart
+            LapTelemetryChartCard(laps = myLaps, isSpanish = strings.isSpanish)
 
             // Export PNG Summary Card & MXGP Podium
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
@@ -427,7 +456,10 @@ fun PilotTelemetryTab(
                             .take(3)
                         CardExporter.generateAndShareMxgpPodium(context, state.activeCircuit, top3, strings.isSpanish)
                     },
-                    colors = ButtonDefaults.buttonColors(containerColor = mx.smBadge),
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = mx.smBadge,
+                        contentColor = contrastTextOn(mx.smBadge)
+                    ),
                     modifier = Modifier.weight(1f).minimumInteractiveComponentSize()
                 ) {
                     Icon(Icons.Default.EmojiEvents, contentDescription = null, modifier = Modifier.size(16.dp))

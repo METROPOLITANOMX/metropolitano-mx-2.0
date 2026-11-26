@@ -163,7 +163,8 @@ class VisionTimingEngine {
             accumulationFramesLeft--
             if (accumulationFramesLeft <= 0) {
                 accumulatingFairing = false
-                val colors = extractDominantLabColors(accumulatedRgb, isSpanish)
+                val singleOnly = config.detectionMode == DetectionMode.SINGLE_COLOR
+                val colors = extractDominantLabColors(accumulatedRgb, isSpanish, singleOnly = singleOnly)
                 val matched = matchRiderProfile(colors, profiles)
                 val snap = encodeBitmapBase64(rgbBitmap, 55)
                 accumulatedRgb.clear()
@@ -219,27 +220,30 @@ class VisionTimingEngine {
                 }
             }
 
-            if (config.detectionMode == DetectionMode.FAIRING_COLOR) {
-                // Freeze exact front-wheel crossing time and accumulate central body silhouette
-                frozenTriggerMs = syncedNowMs
-                frozenPhotoFinishB64 = encodeBitmapBase64(rgbBitmap, 60)
-                accumulatedRgb.clear()
-                accumulatedRgb.addAll(roiFg)
-                accumulatingFairing = true
-                accumulationFramesLeft = 3
-            } else {
-                val colors = extractDominantLabColors(roiFg, isSpanish)
-                val matched = matchRiderProfile(colors, profiles)
-                val photoFinish = encodeBitmapBase64(rgbBitmap, 60)
-                return VisionDetectionResult(
-                    triggered = true,
-                    triggerTimestampMs = syncedNowMs,
-                    detectedColors = colors,
-                    matchedProfile = matched,
-                    occupancyRatio = occupancy,
-                    snapshotBase64 = photoFinish,
-                    photoFinishBase64 = photoFinish
-                )
+            when (config.detectionMode) {
+                DetectionMode.FAIRING_COLOR, DetectionMode.SINGLE_COLOR -> {
+                    // Freeze exact front-wheel crossing time and accumulate central body silhouette
+                    frozenTriggerMs = syncedNowMs
+                    frozenPhotoFinishB64 = encodeBitmapBase64(rgbBitmap, 60)
+                    accumulatedRgb.clear()
+                    accumulatedRgb.addAll(roiFg)
+                    accumulatingFairing = true
+                    accumulationFramesLeft = if (config.detectionMode == DetectionMode.SINGLE_COLOR) 2 else 3
+                }
+                DetectionMode.ANY_PASS -> {
+                    val colors = extractDominantLabColors(roiFg, isSpanish, singleOnly = false)
+                    val matched = matchRiderProfile(colors, profiles)
+                    val photoFinish = encodeBitmapBase64(rgbBitmap, 60)
+                    return VisionDetectionResult(
+                        triggered = true,
+                        triggerTimestampMs = syncedNowMs,
+                        detectedColors = colors,
+                        matchedProfile = matched,
+                        occupancyRatio = occupancy,
+                        snapshotBase64 = photoFinish,
+                        photoFinishBase64 = photoFinish
+                    )
+                }
             }
         }
 
@@ -263,7 +267,11 @@ class VisionTimingEngine {
         return diff > 72
     }
 
-    private fun extractDominantLabColors(rgbPixels: List<Int>, isSpanish: Boolean): List<LabSample> {
+    private fun extractDominantLabColors(
+        rgbPixels: List<Int>,
+        isSpanish: Boolean,
+        singleOnly: Boolean = false
+    ): List<LabSample> {
         if (rgbPixels.isEmpty()) return emptyList()
         val buckets = mutableMapOf<String, MutableList<Int>>()
         for (c in rgbPixels) {
@@ -271,18 +279,27 @@ class VisionTimingEngine {
             val label = classifyLabColorName(lab.first, lab.second, lab.third, isSpanish)
             buckets.getOrPut(label) { mutableListOf() }.add(c)
         }
-        return buckets.entries
-            .sortedByDescending { it.value.size }
-            .take(3)
-            .map { (name, list) ->
-                val avgR = list.map { Color.red(it) }.average().toInt().coerceIn(0, 255)
-                val avgG = list.map { Color.green(it) }.average().toInt().coerceIn(0, 255)
-                val avgB = list.map { Color.blue(it) }.average().toInt().coerceIn(0, 255)
-                val avgColor = Color.rgb(avgR, avgG, avgB)
-                val (l, a, b) = rgbToLab(avgColor)
-                val hex = String.format("#%02X%02X%02X", avgR, avgG, avgB)
-                LabSample(l = l, a = a, b = b, hex = hex, colorName = name)
+        val neutralLabels = setOf("Negro", "Black", "Gris", "Gray", "Blanco", "White")
+        val ordered = if (singleOnly) {
+            // In single-color capture mode, prioritize vibrant fairing colors over neutral tire/track pixels
+            val vibrant = buckets.entries.filter { it.key !in neutralLabels && it.value.size >= 6 }
+            if (vibrant.isNotEmpty()) {
+                vibrant.sortedByDescending { it.value.size }.take(1)
+            } else {
+                buckets.entries.sortedByDescending { it.value.size }.take(1)
             }
+        } else {
+            buckets.entries.sortedByDescending { it.value.size }.take(3)
+        }
+        return ordered.map { (name, list) ->
+            val avgR = list.map { Color.red(it) }.average().toInt().coerceIn(0, 255)
+            val avgG = list.map { Color.green(it) }.average().toInt().coerceIn(0, 255)
+            val avgB = list.map { Color.blue(it) }.average().toInt().coerceIn(0, 255)
+            val avgColor = Color.rgb(avgR, avgG, avgB)
+            val (l, a, b) = rgbToLab(avgColor)
+            val hex = String.format("#%02X%02X%02X", avgR, avgG, avgB)
+            LabSample(l = l, a = a, b = b, hex = hex, colorName = name)
+        }
     }
 
     private fun matchRiderProfile(
@@ -384,9 +401,9 @@ class VisionTimingEngine {
                     val uIdx = uvY * uPlane.rowStride + uvX * uPlane.pixelStride
                     val vIdx = uvY * vPlane.rowStride + uvX * vPlane.pixelStride
 
-                    val yVal = (yBuffer.get(min(yIdx, yBuffer.limit() - 1)).toInt() and 0xFF)
-                    val uVal = (uBuffer.get(min(uIdx, uBuffer.limit() - 1)).toInt() and 0xFF) - 128
-                    val vVal = (vBuffer.get(min(vIdx, vBuffer.limit() - 1)).toInt() and 0xFF) - 128
+                    val yVal = (yBuffer.get(yIdx.coerceIn(0, yBuffer.limit() - 1)).toInt() and 0xFF)
+                    val uVal = (uBuffer.get(uIdx.coerceIn(0, uBuffer.limit() - 1)).toInt() and 0xFF) - 128
+                    val vVal = (vBuffer.get(vIdx.coerceIn(0, vBuffer.limit() - 1)).toInt() and 0xFF) - 128
 
                     val r = (yVal + 1.370705f * vVal).toInt().coerceIn(0, 255)
                     val g = (yVal - 0.337633f * uVal - 0.698001f * vVal).toInt().coerceIn(0, 255)

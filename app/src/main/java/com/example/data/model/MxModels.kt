@@ -27,7 +27,7 @@ enum class AntennaStation(val id: String) {
     ANTENA_TEMP("antena_temp")
 }
 
-enum class DetectionMode { ANY_PASS, FAIRING_COLOR }
+enum class DetectionMode { ANY_PASS, FAIRING_COLOR, SINGLE_COLOR }
 enum class RoiSize(val widthFrac: Float, val heightFrac: Float) {
     S(0.36f, 0.34f),
     M(0.56f, 0.50f),
@@ -90,14 +90,123 @@ data class BikeSetup(
     val usageMinutes: Int = 0,
     val chainMaintAtLaps: Int = 0,
     val gyroMaintAtLaps: Int = 0,
+    val forkMaintAtLaps: Int = 0,
+    val bearingMaintAtLaps: Int = 0,
     val terrain: String = "Tierra compacta / Hard-pack",
+    // Sección 1: Suspensión y Geometría Losi Promoto
     val forkOil: String = "500 cSt / 40wt",
+    val forkSpring: String = "Estándar (Medio)",
     val shockOil: String = "600 cSt / 45wt",
-    val pinionSpur: String = "15T / 50T",
-    val tires: String = "Pro-Line Hole Shot",
+    val shockSpring: String = "Estándar (Medio)",
+    val rearSagMm: String = "18mm",
+    val leanBarSetting: String = "Medio (Estándar)",
+    val frontBrakePercent: Int = 75,
+    val servoSaverSetting: String = "Medio (3/5)",
+    // Sección 2: Electrónica Spektrum MS6X y Firma 85A
     val gyroPercent: Int = 72,
+    val gyroMode: String = "Off-Road",
+    val escPunch: Int = 5,
+    val escDragBrake: Int = 10,
+    val escMaxBrake: Int = 75,
+    val throttleExpo: Int = 0,
+    val lipoCutoff: String = "3.4V/celda",
+    // Sección 3: Desarrollo, Neumáticos y LiPo
+    val pinionTeeth: Int = 15,
+    val spurTeeth: Int = 50,
+    val pinionSpur: String = "15T / 50T",
+    val frontTire: String = "Dunlop MX53",
+    val rearTire: String = "Dunlop MX53",
+    val tires: String = "Dunlop MX53",
+    val tireInsert: String = "Espuma media",
+    val lipoSpecs: String = "2S 5000mAh 50C IC5",
+    val lipoCycles: Int = 0,
+    // Comunidad & Paddock
+    val notes: String = "",
+    val setupVotes: Int = 0,
+    val votedByRiderIds: List<String> = emptyList(),
     val photoBase64List: List<String> = emptyList(),
     val publishedToPaddock: Boolean = false
+) {
+    fun gearRatioText(): String =
+        String.format(Locale.US, "%.2f:1", spurTeeth.coerceAtLeast(1).toDouble() / pinionTeeth.coerceAtLeast(1))
+
+    fun effectivePinionSpur(): String =
+        if (pinionTeeth > 0 && spurTeeth > 0) "${pinionTeeth}T / ${spurTeeth}T (${gearRatioText()})"
+        else pinionSpur
+
+    fun buildSetupSummary(): String =
+        "${discipline.name} • MS6X $gyroPercent% ($gyroMode) • $forkOil / $shockOil • ${effectivePinionSpur()} • $frontTire"
+
+    companion object {
+        fun defaultsFor(surface: SurfaceType): BikeSetup = if (surface == SurfaceType.SM) {
+            BikeSetup(
+                discipline = SurfaceType.SM,
+                modelName = "Losi Promoto-SM",
+                terrain = "Asfalto / Supermotard",
+                forkOil = "650 cSt / 50wt",
+                forkSpring = "Duro (Supermoto)",
+                shockOil = "700 cSt / 55wt",
+                shockSpring = "Duro (Asfalto)",
+                rearSagMm = "14mm",
+                leanBarSetting = "Bajo (Ángulo SM)",
+                frontBrakePercent = 90,
+                servoSaverSetting = "Rígido (4/5)",
+                gyroPercent = 65,
+                gyroMode = "On-Road / Wheelie",
+                escPunch = 7,
+                escDragBrake = 15,
+                escMaxBrake = 85,
+                throttleExpo = 5,
+                lipoCutoff = "3.4V/celda",
+                pinionTeeth = 16,
+                spurTeeth = 50,
+                pinionSpur = "16T / 50T",
+                frontTire = "Pro-Line Supermoto Slick",
+                rearTire = "Pro-Line Supermoto Slick",
+                tires = "Pro-Line Supermoto Slick",
+                tireInsert = "Espuma firme asfalto",
+                lipoSpecs = "2S 5200mAh 60C IC5"
+            )
+        } else {
+            BikeSetup(
+                discipline = SurfaceType.MX,
+                modelName = "Losi Promoto-MX",
+                terrain = "Tierra compacta / Hard-pack",
+                forkOil = "500 cSt / 40wt",
+                forkSpring = "Estándar (Medio)",
+                shockOil = "600 cSt / 45wt",
+                shockSpring = "Estándar (Medio)",
+                rearSagMm = "18mm",
+                leanBarSetting = "Medio (Estándar)",
+                frontBrakePercent = 75,
+                servoSaverSetting = "Medio (3/5)",
+                gyroPercent = 72,
+                gyroMode = "Off-Road",
+                escPunch = 5,
+                escDragBrake = 10,
+                escMaxBrake = 75,
+                throttleExpo = 0,
+                lipoCutoff = "3.4V/celda",
+                pinionTeeth = 15,
+                spurTeeth = 50,
+                pinionSpur = "15T / 50T",
+                frontTire = "Dunlop MX53",
+                rearTire = "Dunlop MX53",
+                tires = "Dunlop MX53",
+                tireInsert = "Espuma media",
+                lipoSpecs = "2S 5000mAh 50C IC5"
+            )
+        }
+    }
+}
+
+@JsonClass(generateAdapter = true)
+data class PaAnnouncement(
+    val id: String = "",
+    val textEs: String = "",
+    val textEn: String = "",
+    val timestampMs: Long = 0L,
+    val isHotlap: Boolean = false
 )
 
 @JsonClass(generateAdapter = true)
@@ -133,6 +242,11 @@ data class RoomState(
     val antiVibration: AntiVibrationLevel = AntiVibrationLevel.MEDIUM,
     val weeklyHotlapRider: String = "",
     val weeklyHotlapMs: Long = 0L,
+    val mxRecordRider: String = "",
+    val mxRecordMs: Long = 0L,
+    val smRecordRider: String = "",
+    val smRecordMs: Long = 0L,
+    val lastPaAnnouncement: PaAnnouncement? = null,
     val activeRiders: Map<String, ActiveRoomRider> = emptyMap(),
     val updatedAtMs: Long = 0L
 )
@@ -288,6 +402,29 @@ fun formatLapMs(ms: Long): String {
         String.format(Locale.US, "%d:%02d.%02d", mins, secs, millis)
     } else {
         String.format(Locale.US, "%02d.%02d", secs, millis)
+    }
+}
+
+fun formatLapForSpeech(ms: Long, isSpanish: Boolean): String {
+    if (ms <= 0L) return ""
+    val totalSec = ms / 1000L
+    val mins = totalSec / 60L
+    val secs = totalSec % 60L
+    val hundredths = (ms % 1000L) / 10L
+    return if (isSpanish) {
+        if (mins > 0) {
+            val minWord = if (mins == 1L) "minuto" else "minutos"
+            "$mins $minWord $secs con ${String.format(Locale.US, "%02d", hundredths)}"
+        } else {
+            "$secs segundos ${String.format(Locale.US, "%02d", hundredths)}"
+        }
+    } else {
+        if (mins > 0) {
+            val minWord = if (mins == 1L) "minute" else "minutes"
+            "$mins $minWord $secs point ${String.format(Locale.US, "%02d", hundredths)}"
+        } else {
+            "$secs point ${String.format(Locale.US, "%02d", hundredths)} seconds"
+        }
     }
 }
 

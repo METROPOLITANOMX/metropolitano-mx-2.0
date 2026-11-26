@@ -42,15 +42,29 @@ import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.CompareArrows
+import androidx.compose.material.icons.filled.Star
+import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.Icon
+import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.ScrollableTabRow
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.font.FontWeight
 import com.example.R
+import com.example.data.model.BikeSetup
 import com.example.data.model.LayoutType
 import com.example.data.model.SurfaceType
 import com.example.data.model.formatLapMs
 import com.example.i18n.MxStrings
 import com.example.ui.components.Base64ImageView
 import com.example.ui.components.GlassRaceCard
+import com.example.ui.components.RiderDorsalBadge
 import com.example.ui.components.SurfaceBadge
 import com.example.ui.theme.LocalMxColors
+import com.example.ui.theme.contrastTextOn
 import com.example.ui.viewmodel.MxProViewModel
 import com.example.ui.viewmodel.MxUiState
 
@@ -254,116 +268,264 @@ fun CreateCircuitDialog(
 fun WorldRankingPaddockDialog(
     state: MxUiState,
     strings: MxStrings,
+    viewModel: MxProViewModel,
     onDismiss: () -> Unit
 ) {
     var tab by remember { mutableIntStateOf(0) }
     var surfaceFilter by remember { mutableStateOf<SurfaceType?>(null) }
+    var compareA by remember { mutableStateOf<BikeSetup?>(null) }
+    var compareB by remember { mutableStateOf<BikeSetup?>(null) }
     val mx = LocalMxColors.current
 
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text(strings.worldRankingPaddock) },
         text = {
-            Column(modifier = Modifier.fillMaxWidth().heightIn(max = 460.dp)) {
-                TabRow(selectedTabIndex = tab) {
+            Column(modifier = Modifier.fillMaxWidth().heightIn(max = 500.dp)) {
+                ScrollableTabRow(selectedTabIndex = tab, edgePadding = 4.dp) {
                     Tab(selected = tab == 0, onClick = { tab = 0 }, text = { Text("Ranking") })
                     Tab(selected = tab == 1, onClick = { tab = 1 }, text = { Text("Paddock") })
-                    Tab(selected = tab == 2, onClick = { tab = 2 }, text = { Text(if (strings.isSpanish) "Copas" else "Champs") })
+                    Tab(selected = tab == 2, onClick = { tab = 2 }, text = { Text(if (strings.isSpanish) "Retos MX/SM" else "Challenges") })
+                    Tab(selected = tab == 3, onClick = { tab = 3 }, text = { Text(if (strings.isSpanish) "Copas" else "Champs") })
                 }
                 Spacer(Modifier.height(8.dp))
-                if (tab != 2) {
+                if (tab == 0 || tab == 1) {
                     Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                        FilterChip(selected = surfaceFilter == null, onClick = { surfaceFilter = null }, label = { Text("All") })
-                        FilterChip(selected = surfaceFilter == SurfaceType.MX, onClick = { surfaceFilter = SurfaceType.MX }, label = { Text("MX") })
-                        FilterChip(selected = surfaceFilter == SurfaceType.SM, onClick = { surfaceFilter = SurfaceType.SM }, label = { Text("SM") })
+                        FilterChip(selected = surfaceFilter == null, onClick = { surfaceFilter = null }, label = { Text(if (strings.isSpanish) "Todas" else "All") })
+                        FilterChip(selected = surfaceFilter == SurfaceType.MX, onClick = { surfaceFilter = SurfaceType.MX }, label = { Text("MX Tierra") })
+                        FilterChip(selected = surfaceFilter == SurfaceType.SM, onClick = { surfaceFilter = SurfaceType.SM }, label = { Text("SM Supermotard") })
                     }
                     Spacer(Modifier.height(8.dp))
                 }
-                if (tab == 0) {
-                    val sorted = state.riders
-                        .filter { surfaceFilter == null || it.preferredSurface == surfaceFilter }
-                        .sortedWith(compareByDescending<com.example.data.model.RiderAccount> { it.regularityIndex }.thenByDescending { it.avgSpeedKmh })
-                    LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                        itemsIndexed(sorted) { idx, r ->
-                            GlassRaceCard {
-                                Column(modifier = Modifier.padding(10.dp)) {
-                                    Row(
-                                        modifier = Modifier.fillMaxWidth(),
-                                        horizontalArrangement = Arrangement.SpaceBetween,
-                                        verticalAlignment = Alignment.CenterVertically
-                                    ) {
-                                        Text("#${idx + 1} ${r.name}", style = MaterialTheme.typography.titleMedium)
-                                        SurfaceBadge(surface = r.preferredSurface)
-                                    }
-                                    Text(
-                                        text = "${strings.regularity}: ${String.format("%.1f", r.regularityIndex)}% • ${String.format("%.1f", r.avgSpeedKmh)} km/h • 200m Eq: ${formatLapMs(r.eq200mMs)}",
-                                        style = MaterialTheme.typography.labelSmall,
-                                        color = mx.goldAccent
-                                    )
-                                }
-                            }
-                        }
-                    }
-                } else if (tab == 1) {
-                    val bikes = state.paddockBikes.filter { surfaceFilter == null || it.discipline == surfaceFilter }
-                    LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                        items(bikes) { b ->
-                            GlassRaceCard {
-                                Column(modifier = Modifier.padding(10.dp)) {
-                                    if (b.photoBase64List.isNotEmpty()) {
-                                        Base64ImageView(
-                                            base64 = b.photoBase64List.first(),
-                                            contentDescription = b.modelName,
-                                            modifier = Modifier.fillMaxWidth().height(110.dp).clip(RoundedCornerShape(10.dp))
-                                        )
-                                    } else {
-                                        Image(
-                                            painter = painterResource(
-                                                if (b.discipline == SurfaceType.MX) R.drawable.img_bike_mx else R.drawable.img_bike_sm
-                                            ),
-                                            contentDescription = b.modelName,
-                                            contentScale = ContentScale.Crop,
-                                            modifier = Modifier.fillMaxWidth().height(110.dp).clip(RoundedCornerShape(10.dp))
-                                        )
-                                    }
-                                    Spacer(Modifier.height(6.dp))
-                                    Row(
-                                        modifier = Modifier.fillMaxWidth(),
-                                        horizontalArrangement = Arrangement.SpaceBetween
-                                    ) {
-                                        Text("${b.modelName} #${b.dorsal}", style = MaterialTheme.typography.titleMedium)
-                                        SurfaceBadge(b.discipline)
-                                    }
-                                    Text("${b.riderName} • ${b.terrain}", style = MaterialTheme.typography.bodyMedium, color = mx.subtleText)
-                                    Text(
-                                        "Fork: ${b.forkOil} | Shock: ${b.shockOil} | ${b.pinionSpur} | Gyro ${b.gyroPercent}%",
-                                        style = MaterialTheme.typography.labelSmall,
-                                        color = mx.goldAccent
-                                    )
-                                }
-                            }
-                        }
-                    }
-                } else {
-                    if (state.championships.isEmpty()) {
-                        Text(
-                            if (strings.isSpanish) "Dirección aún no ha creado campeonatos en este circuito." else "No championships created in this circuit yet.",
-                            color = mx.subtleText
-                        )
-                    } else {
+                when (tab) {
+                    0 -> {
+                        val sorted = state.riders
+                            .filter { surfaceFilter == null || it.preferredSurface == surfaceFilter }
+                            .sortedWith(compareByDescending<com.example.data.model.RiderAccount> { it.regularityIndex }.thenByDescending { it.avgSpeedKmh })
                         LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                            items(state.championships) { ch ->
+                            itemsIndexed(sorted) { idx, r ->
+                                val dorsal = state.allBikes.firstOrNull { it.id == r.activeBikeId }?.dorsal
+                                    ?: state.allBikes.firstOrNull { it.riderId == r.id }?.dorsal ?: "01"
                                 GlassRaceCard {
                                     Column(modifier = Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                                        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                                            Text("${ch.name} (${ch.completedHeats}/${ch.totalHeats})", style = MaterialTheme.typography.titleMedium, color = mx.goldAccent)
-                                            SurfaceBadge(ch.discipline)
+                                        Row(
+                                            modifier = Modifier.fillMaxWidth(),
+                                            horizontalArrangement = Arrangement.SpaceBetween,
+                                            verticalAlignment = Alignment.CenterVertically
+                                        ) {
+                                            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                                RiderDorsalBadge(
+                                                    dorsal = dorsal,
+                                                    discipline = r.preferredSurface,
+                                                    position = idx + 1
+                                                )
+                                                Text(r.name, style = MaterialTheme.typography.titleMedium)
+                                            }
+                                            SurfaceBadge(surface = r.preferredSurface)
                                         }
-                                        ch.standings.values.sortedByDescending { it.points }.forEachIndexed { idx, st ->
+                                        Text(
+                                            text = "${strings.regularity}: ${String.format("%.1f", r.regularityIndex)}% • ${String.format("%.1f", r.avgSpeedKmh)} km/h • 200m Eq: ${formatLapMs(r.eq200mMs)}",
+                                            style = MaterialTheme.typography.labelSmall,
+                                            color = mx.goldAccent
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    1 -> {
+                        val bikes = state.paddockBikes
+                            .filter { surfaceFilter == null || it.discipline == surfaceFilter }
+                            .sortedByDescending { it.setupVotes }
+                        val voterKey = state.currentRider?.id ?: state.deviceId.ifBlank { "guest" }
+
+                        if (compareA != null && compareB != null) {
+                            SetupComparatorCard(
+                                bikeA = compareA!!,
+                                bikeB = compareB!!,
+                                isSpanish = strings.isSpanish,
+                                onClose = { compareA = null; compareB = null }
+                            )
+                            Spacer(Modifier.height(8.dp))
+                        }
+
+                        if (bikes.isEmpty()) {
+                            Text(
+                                if (strings.isSpanish) "Aún no hay setups públicos en esta modalidad. ¡Publica el tuyo desde Garaje Pro!"
+                                else "No public setups in this class yet. Publish yours from Pro Garage!",
+                                color = mx.subtleText
+                            )
+                        } else {
+                            LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                items(bikes) { b ->
+                                    val voted = voterKey in b.votedByRiderIds
+                                    GlassRaceCard {
+                                        Column(modifier = Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                                            if (b.photoBase64List.isNotEmpty()) {
+                                                Base64ImageView(
+                                                    base64 = b.photoBase64List.first(),
+                                                    contentDescription = b.modelName,
+                                                    modifier = Modifier.fillMaxWidth().height(100.dp).clip(RoundedCornerShape(10.dp))
+                                                )
+                                            } else {
+                                                Image(
+                                                    painter = painterResource(
+                                                        if (b.discipline == SurfaceType.MX) R.drawable.img_bike_mx else R.drawable.img_bike_sm
+                                                    ),
+                                                    contentDescription = b.modelName,
+                                                    contentScale = ContentScale.Crop,
+                                                    modifier = Modifier.fillMaxWidth().height(100.dp).clip(RoundedCornerShape(10.dp))
+                                                )
+                                            }
+                                            Row(
+                                                modifier = Modifier.fillMaxWidth(),
+                                                horizontalArrangement = Arrangement.SpaceBetween,
+                                                verticalAlignment = Alignment.CenterVertically
+                                            ) {
+                                                Text("${b.modelName} #${b.dorsal}", style = MaterialTheme.typography.titleMedium)
+                                                SurfaceBadge(b.discipline)
+                                            }
+                                            Text("${b.riderName} • ${b.terrain}", style = MaterialTheme.typography.bodyMedium, color = mx.subtleText)
                                             Text(
-                                                "${idx + 1}. ${st.riderName} #${st.dorsal} — ${st.points} pts (${st.wins}W)",
-                                                style = MaterialTheme.typography.labelMedium
+                                                "Horq: ${b.forkOil} (${b.forkSpring}) | Amort: ${b.shockOil} | Lean: ${b.leanBarSetting}",
+                                                style = MaterialTheme.typography.labelSmall
                                             )
+                                            Text(
+                                                "MS6X ${b.gyroPercent}% (${b.gyroMode}) • Punch ${b.escPunch}/9 • ${b.effectivePinionSpur()}",
+                                                style = MaterialTheme.typography.labelSmall,
+                                                color = mx.goldAccent
+                                            )
+                                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+                                                OutlinedButton(
+                                                    onClick = { viewModel.voteBikeSetup(b) },
+                                                    modifier = Modifier.weight(1f)
+                                                ) {
+                                                    Icon(
+                                                        Icons.Default.Star,
+                                                        contentDescription = null,
+                                                        tint = if (voted) mx.goldAccent else mx.subtleText
+                                                    )
+                                                    Spacer(Modifier.width(4.dp))
+                                                    Text("${b.setupVotes} ${if (strings.isSpanish) "Votos" else "Votes"}")
+                                                }
+                                                Button(
+                                                    onClick = {
+                                                        when {
+                                                            compareA == null -> compareA = b
+                                                            compareA?.id == b.id -> compareA = null
+                                                            else -> compareB = b
+                                                        }
+                                                    },
+                                                    colors = ButtonDefaults.buttonColors(
+                                                        containerColor = if (compareA?.id == b.id || compareB?.id == b.id) mx.telemetryGreen else mx.smBadge,
+                                                        contentColor = contrastTextOn(if (compareA?.id == b.id || compareB?.id == b.id) mx.telemetryGreen else mx.smBadge)
+                                                    ),
+                                                    modifier = Modifier.weight(1f)
+                                                ) {
+                                                    Icon(Icons.Default.CompareArrows, contentDescription = null)
+                                                    Spacer(Modifier.width(4.dp))
+                                                    Text(
+                                                        when {
+                                                            compareA?.id == b.id -> "Moto A ✓"
+                                                            compareB?.id == b.id -> "Moto B ✓"
+                                                            compareA == null -> if (strings.isSpanish) "Comparar A" else "Pick A"
+                                                            else -> if (strings.isSpanish) "VS Moto B" else "Compare B"
+                                                        },
+                                                        maxLines = 1
+                                                    )
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    2 -> {
+                        val mxLaps = state.circuitLaps.filter { it.discipline == SurfaceType.MX && it.lapTimeMs > 0L }
+                        val smLaps = state.circuitLaps.filter { it.discipline == SurfaceType.SM && it.lapTimeMs > 0L }
+                        val myBestMx = mxLaps.filter { it.riderId == state.currentRider?.id }.minOfOrNull { it.lapTimeMs } ?: 0L
+                        val myBestSm = smLaps.filter { it.riderId == state.currentRider?.id }.minOfOrNull { it.lapTimeMs } ?: 0L
+
+                        Column(modifier = Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                            GlassRaceCard(accentBorder = mx.mxBadge) {
+                                Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                                        Text(
+                                            if (strings.isSpanish) "RETO MOTOCROSS (MX)" else "MOTOCROSS CHALLENGE (MX)",
+                                            style = MaterialTheme.typography.titleMedium,
+                                            color = mx.mxBadge,
+                                            fontWeight = FontWeight.Bold
+                                        )
+                                        SurfaceBadge(SurfaceType.MX)
+                                    }
+                                    Text(
+                                        text = if (state.roomState.mxRecordMs > 0L) {
+                                            "${state.roomState.mxRecordRider}: ${formatLapMs(state.roomState.mxRecordMs)}"
+                                        } else {
+                                            if (strings.isSpanish) "Sin récord MX aún — ¡Sé el primero!" else "No MX record yet — Be the first!"
+                                        },
+                                        style = MaterialTheme.typography.headlineMedium,
+                                        color = mx.goldAccent
+                                    )
+                                    Text(
+                                        "${if (strings.isSpanish) "Tu mejor vuelta MX" else "Your best MX lap"}: ${formatLapMs(myBestMx)} • ${mxLaps.size} ${if (strings.isSpanish) "vueltas registradas" else "laps"}",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = mx.subtleText
+                                    )
+                                }
+                            }
+
+                            GlassRaceCard(accentBorder = mx.smBadge) {
+                                Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                                        Text(
+                                            if (strings.isSpanish) "RETO SUPERMOTARD (SM)" else "SUPERMOTO CHALLENGE (SM)",
+                                            style = MaterialTheme.typography.titleMedium,
+                                            color = mx.smBadge,
+                                            fontWeight = FontWeight.Bold
+                                        )
+                                        SurfaceBadge(SurfaceType.SM)
+                                    }
+                                    Text(
+                                        text = if (state.roomState.smRecordMs > 0L) {
+                                            "${state.roomState.smRecordRider}: ${formatLapMs(state.roomState.smRecordMs)}"
+                                        } else {
+                                            if (strings.isSpanish) "Sin récord SM aún — ¡Estrena el asfalto!" else "No SM record yet — Set the pace!"
+                                        },
+                                        style = MaterialTheme.typography.headlineMedium,
+                                        color = mx.smBadge
+                                    )
+                                    Text(
+                                        "${if (strings.isSpanish) "Tu mejor vuelta SM" else "Your best SM lap"}: ${formatLapMs(myBestSm)} • ${smLaps.size} ${if (strings.isSpanish) "vueltas registradas" else "laps"}",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = mx.subtleText
+                                    )
+                                }
+                            }
+                        }
+                    }
+                    else -> {
+                        if (state.championships.isEmpty()) {
+                            Text(
+                                if (strings.isSpanish) "Dirección aún no ha creado campeonatos en este circuito." else "No championships created in this circuit yet.",
+                                color = mx.subtleText
+                            )
+                        } else {
+                            LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                items(state.championships) { ch ->
+                                    GlassRaceCard {
+                                        Column(modifier = Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                                            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                                                Text("${ch.name} (${ch.completedHeats}/${ch.totalHeats})", style = MaterialTheme.typography.titleMedium, color = mx.goldAccent)
+                                                SurfaceBadge(ch.discipline)
+                                            }
+                                            ch.standings.values.sortedByDescending { it.points }.forEachIndexed { idx, st ->
+                                                Text(
+                                                    "${idx + 1}. ${st.riderName} #${st.dorsal} — ${st.points} pts (${st.wins}W)",
+                                                    style = MaterialTheme.typography.labelMedium
+                                                )
+                                            }
                                         }
                                     }
                                 }
@@ -375,6 +537,52 @@ fun WorldRankingPaddockDialog(
         },
         confirmButton = { TextButton(onClick = onDismiss) { Text("OK") } }
     )
+}
+
+@Composable
+private fun SetupComparatorCard(
+    bikeA: BikeSetup,
+    bikeB: BikeSetup,
+    isSpanish: Boolean,
+    onClose: () -> Unit
+) {
+    val mx = LocalMxColors.current
+    val rows = listOf(
+        Triple(if (isSpanish) "Modalidad" else "Class", bikeA.discipline.name, bikeB.discipline.name),
+        Triple(if (isSpanish) "Horquilla" else "Fork", bikeA.forkOil, bikeB.forkOil),
+        Triple(if (isSpanish) "Amortiguador" else "Shock", bikeA.shockOil, bikeB.shockOil),
+        Triple("SAG / Lean", "${bikeA.rearSagMm} / ${bikeA.leanBarSetting}", "${bikeB.rearSagMm} / ${bikeB.leanBarSetting}"),
+        Triple("MS6X Gyro", "${bikeA.gyroPercent}% (${bikeA.gyroMode})", "${bikeB.gyroPercent}% (${bikeB.gyroMode})"),
+        Triple("ESC Punch/Drag", "${bikeA.escPunch}/9 • ${bikeA.escDragBrake}%", "${bikeB.escPunch}/9 • ${bikeB.escDragBrake}%"),
+        Triple(if (isSpanish) "Desarrollo" else "Gearing", bikeA.effectivePinionSpur(), bikeB.effectivePinionSpur()),
+        Triple(if (isSpanish) "Neumáticos" else "Tires", bikeA.frontTire, bikeB.frontTire)
+    )
+    GlassRaceCard(accentBorder = mx.smBadge) {
+        Column(modifier = Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    "${bikeA.riderName} #${bikeA.dorsal}  VS  ${bikeB.riderName} #${bikeB.dorsal}",
+                    style = MaterialTheme.typography.titleMedium,
+                    color = mx.smBadge
+                )
+                TextButton(onClick = onClose) { Text("✕") }
+            }
+            rows.forEach { (label, valA, valB) ->
+                val diff = valA != valB
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .background(if (diff) mx.goldAccent.copy(alpha = 0.12f) else Color.Transparent, RoundedCornerShape(6.dp))
+                        .padding(horizontal = 4.dp, vertical = 2.dp),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    Text(label, style = MaterialTheme.typography.labelSmall, color = mx.subtleText, modifier = Modifier.weight(0.8f))
+                    Text(valA, style = MaterialTheme.typography.labelSmall, color = if (diff) mx.goldBright else MaterialTheme.colorScheme.onSurface, modifier = Modifier.weight(1.1f))
+                    Text(valB, style = MaterialTheme.typography.labelSmall, color = if (diff) mx.smBadge else MaterialTheme.colorScheme.onSurface, modifier = Modifier.weight(1.1f))
+                }
+            }
+        }
+    }
 }
 
 @Composable

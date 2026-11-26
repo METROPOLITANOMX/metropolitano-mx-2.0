@@ -23,6 +23,8 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.VolumeOff
+import androidx.compose.material.icons.automirrored.filled.VolumeUp
 import androidx.compose.material.icons.filled.DarkMode
 import androidx.compose.material.icons.filled.LightMode
 import androidx.compose.material.icons.filled.Translate
@@ -56,7 +58,9 @@ fun MxTopHeader(
     isSpanish: Boolean,
     onBack: (() -> Unit)? = null,
     onToggleSunMode: () -> Unit,
-    onToggleLang: () -> Unit
+    onToggleLang: () -> Unit,
+    paMuted: Boolean? = null,
+    onTogglePaMute: (() -> Unit)? = null
 ) {
     val mx = LocalMxColors.current
     Row(
@@ -108,6 +112,20 @@ fun MxTopHeader(
                 )
             }
             Spacer(modifier = Modifier.width(4.dp))
+            if (paMuted != null && onTogglePaMute != null) {
+                IconButton(
+                    onClick = onTogglePaMute,
+                    modifier = Modifier
+                        .minimumInteractiveComponentSize()
+                        .testTag("toggle_pa_audio_button")
+                ) {
+                    Icon(
+                        imageVector = if (paMuted) Icons.AutoMirrored.Filled.VolumeOff else Icons.AutoMirrored.Filled.VolumeUp,
+                        contentDescription = if (paMuted) "Unmute PA" else "Mute PA",
+                        tint = if (paMuted) mx.racingRed else mx.telemetryGreen
+                    )
+                }
+            }
             IconButton(
                 onClick = onToggleLang,
                 modifier = Modifier

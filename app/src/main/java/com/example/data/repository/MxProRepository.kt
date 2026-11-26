@@ -104,6 +104,9 @@ class MxProRepository(
     suspend fun upsertRoomRider(circuitId: String, rider: ActiveRoomRider): Boolean =
         rtdb.upsertRoomRider(circuitId, rider)
 
+    suspend fun deleteRoomRider(circuitId: String, riderId: String): Boolean =
+        rtdb.deleteRoomRider(circuitId, riderId)
+
     suspend fun getCircuitLaps(circuitId: String): List<LapRecord> {
         val remote = rtdb.fetchCircuitLaps(circuitId)
         if (rtdb.isOnline) {
@@ -152,6 +155,9 @@ class MxProRepository(
 
     suspend fun saveColorProfile(circuitId: String, profile: RiderColorProfile): Boolean =
         rtdb.saveColorProfile(circuitId, profile)
+
+    suspend fun deleteColorProfile(circuitId: String, riderId: String): Boolean =
+        rtdb.deleteColorProfile(circuitId, riderId)
 
     suspend fun getCapturedPasses(circuitId: String): List<CapturedPassSample> =
         rtdb.fetchCapturedPasses(circuitId)

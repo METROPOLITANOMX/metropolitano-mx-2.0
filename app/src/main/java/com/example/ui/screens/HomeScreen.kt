@@ -399,7 +399,32 @@ fun HomeScreen(
                     }
                 }
 
-                if (state.roomState.weeklyHotlapMs > 0L) {
+                if (state.roomState.mxRecordMs > 0L || state.roomState.smRecordMs > 0L) {
+                    GlassRaceCard(accentBorder = mx.goldAccent.copy(alpha = 0.6f)) {
+                        Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                            if (state.roomState.mxRecordMs > 0L) {
+                                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                                    Row(verticalAlignment = Alignment.CenterVertically) {
+                                        Icon(Icons.Default.EmojiEvents, contentDescription = null, tint = mx.mxBadge)
+                                        Spacer(Modifier.width(8.dp))
+                                        Text("Hotlap MX: ${state.roomState.mxRecordRider}", style = MaterialTheme.typography.titleMedium)
+                                    }
+                                    Text(formatLapMs(state.roomState.mxRecordMs), style = MaterialTheme.typography.titleLarge, color = mx.mxBadge)
+                                }
+                            }
+                            if (state.roomState.smRecordMs > 0L) {
+                                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                                    Row(verticalAlignment = Alignment.CenterVertically) {
+                                        Icon(Icons.Default.EmojiEvents, contentDescription = null, tint = mx.smBadge)
+                                        Spacer(Modifier.width(8.dp))
+                                        Text("Hotlap SM: ${state.roomState.smRecordRider}", style = MaterialTheme.typography.titleMedium)
+                                    }
+                                    Text(formatLapMs(state.roomState.smRecordMs), style = MaterialTheme.typography.titleLarge, color = mx.smBadge)
+                                }
+                            }
+                        }
+                    }
+                } else if (state.roomState.weeklyHotlapMs > 0L) {
                     GlassRaceCard(accentBorder = mx.goldAccent.copy(alpha = 0.6f)) {
                         Row(
                             modifier = Modifier
@@ -637,6 +662,7 @@ fun HomeScreen(
         WorldRankingPaddockDialog(
             state = state,
             strings = strings,
+            viewModel = viewModel,
             onDismiss = { showRankingPaddockDialog = false }
         )
     }

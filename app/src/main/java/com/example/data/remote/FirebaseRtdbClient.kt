@@ -290,6 +290,9 @@ class FirebaseRtdbClient {
     suspend fun upsertRoomRider(circuitId: String, rider: ActiveRoomRider): Boolean =
         putObject("rooms/$circuitId/activeRiders/${rider.riderId}", rider)
 
+    suspend fun deleteRoomRider(circuitId: String, riderId: String): Boolean =
+        deletePath("rooms/$circuitId/activeRiders/$riderId")
+
     // --- Laps ---
     suspend fun fetchCircuitLaps(circuitId: String): List<LapRecord> =
         getMap<LapRecord>("laps/$circuitId").values.sortedByDescending { it.timestampMs }
@@ -332,6 +335,9 @@ class FirebaseRtdbClient {
 
     suspend fun saveColorProfile(circuitId: String, profile: RiderColorProfile): Boolean =
         putObject("color_profiles/$circuitId/${profile.riderId}", profile)
+
+    suspend fun deleteColorProfile(circuitId: String, riderId: String): Boolean =
+        deletePath("color_profiles/$circuitId/$riderId")
 
     suspend fun fetchCapturedPasses(circuitId: String): List<CapturedPassSample> =
         getMap<CapturedPassSample>("color_captures/$circuitId").values

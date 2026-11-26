@@ -41,6 +41,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -65,6 +66,7 @@ import com.example.engine.VisionTimingEngine
 import com.example.i18n.MxStrings
 import com.example.ui.components.GlassRaceCard
 import com.example.ui.theme.LocalMxColors
+import com.example.ui.theme.contrastTextOn
 import com.example.ui.viewmodel.MxProViewModel
 import com.example.ui.viewmodel.MxUiState
 import kotlinx.coroutines.delay
@@ -102,11 +104,7 @@ fun PilotSoloAntennaOverlay(
 
     val visionEngine = remember { VisionTimingEngine() }
     val analysisExecutor = remember { Executors.newSingleThreadExecutor() }
-
-    DisposableEffect(Unit) {
-        if (!hasCameraPerm) camPermLauncher.launch(Manifest.permission.CAMERA)
-        onDispose { analysisExecutor.shutdown() }
-    }
+    var boundProvider by remember { mutableStateOf<ProcessCameraProvider?>(null) }
 
     val soloConfig = AntennaConfig(
         antennaId = "solo_phone",
@@ -119,6 +117,19 @@ fun PilotSoloAntennaOverlay(
         linePosition = 0.5f,
         antiVibration = AntiVibrationLevel.MEDIUM
     )
+    val latestSoloConfig by rememberUpdatedState(soloConfig)
+    val latestIsSpanish by rememberUpdatedState(strings.isSpanish)
+
+    DisposableEffect(Unit) {
+        if (!hasCameraPerm) camPermLauncher.launch(Manifest.permission.CAMERA)
+        onDispose {
+            try {
+                boundProvider?.unbindAll()
+            } catch (_: Exception) {
+            }
+            analysisExecutor.shutdown()
+        }
+    }
 
     val rider = state.currentRider
     val roomRider = rider?.let { state.roomState.activeRiders[it.id] }
@@ -127,32 +138,38 @@ fun PilotSoloAntennaOverlay(
         if (hasCameraPerm) {
             AndroidView(
                 factory = { ctx ->
-                    val previewView = PreviewView(ctx)
+                    val previewView = PreviewView(ctx).apply {
+                        implementationMode = PreviewView.ImplementationMode.COMPATIBLE
+                    }
                     val cameraProviderFuture = ProcessCameraProvider.getInstance(ctx)
                     cameraProviderFuture.addListener({
-                        val cameraProvider = cameraProviderFuture.get()
-                        val preview = Preview.Builder().build().also {
-                            it.surfaceProvider = previewView.surfaceProvider
-                        }
-                        val analysis = ImageAnalysis.Builder()
-                            .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
-                            .build()
-                        analysis.setAnalyzer(analysisExecutor) { imageProxy ->
-                            val now = viewModel.syncedNowMs()
-                            val res = visionEngine.processFrame(
-                                image = imageProxy,
-                                config = soloConfig,
-                                profiles = emptyList(),
-                                syncedNowMs = now,
-                                isSpanish = strings.isSpanish,
-                                captureLiveSnapshot = false
-                            )
-                            if (res != null && res.triggered) {
-                                viewModel.handleSoloPilotVisionDetection(res)
-                            }
-                            imageProxy.close()
-                        }
                         try {
+                            val cameraProvider = cameraProviderFuture.get()
+                            boundProvider = cameraProvider
+                            val preview = Preview.Builder().build().also {
+                                it.surfaceProvider = previewView.surfaceProvider
+                            }
+                            val analysis = ImageAnalysis.Builder()
+                                .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
+                                .build()
+                            analysis.setAnalyzer(analysisExecutor) { imageProxy ->
+                                try {
+                                    val now = viewModel.syncedNowMs()
+                                    val res = visionEngine.processFrame(
+                                        image = imageProxy,
+                                        config = latestSoloConfig,
+                                        profiles = emptyList(),
+                                        syncedNowMs = now,
+                                        isSpanish = latestIsSpanish,
+                                        captureLiveSnapshot = false
+                                    )
+                                    if (res != null && res.triggered) {
+                                        viewModel.handleSoloPilotVisionDetection(res)
+                                    }
+                                } finally {
+                                    imageProxy.close()
+                                }
+                            }
                             cameraProvider.unbindAll()
                             cameraProvider.bindToLifecycle(
                                 lifecycleOwner,
@@ -259,28 +276,30 @@ fun PilotSoloAntennaOverlay(
                         label = { Text(if (lineOrientation == LineOrientation.VERTICAL) "Vert" else "Horiz") }
                     )
                 }
-                Button(
-                    onClick = {
-                        scope.launch {
-                            for (s in 3 downTo 1) {
-                                calibratingCountdown = s
-                                viewModel.voiceEngine.speak(s.toString())
-                                delay(1000L)
+                    val btnBg = if (calibrated) mx.telemetryGreen else mx.goldAccent
+                    Button(
+                        onClick = {
+                            scope.launch {
+                                for (s in 3 downTo 1) {
+                                    calibratingCountdown = s
+                                    viewModel.voiceEngine.speak(s.toString())
+                                    delay(1000L)
+                                }
+                                calibratingCountdown = 0
+                                visionEngine.requestLocalCalibration()
+                                calibrated = true
+                                viewModel.voiceEngine.speak(
+                                    if (strings.isSpanish) "Antena calibrada, tiempos públicos activos"
+                                    else "Antenna calibrated, public timing active"
+                                )
                             }
-                            calibratingCountdown = 0
-                            visionEngine.requestLocalCalibration()
-                            calibrated = true
-                            viewModel.voiceEngine.speak(
-                                if (strings.isSpanish) "Antena calibrada, tiempos públicos activos"
-                                else "Antenna calibrated, public timing active"
-                            )
-                        }
-                    },
-                    colors = ButtonDefaults.buttonColors(
-                        containerColor = if (calibrated) mx.telemetryGreen else mx.goldAccent
-                    ),
-                    modifier = Modifier.fillMaxWidth().minimumInteractiveComponentSize().testTag("solo_antenna_calibrate")
-                ) {
+                        },
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = btnBg,
+                            contentColor = contrastTextOn(btnBg)
+                        ),
+                        modifier = Modifier.fillMaxWidth().minimumInteractiveComponentSize().testTag("solo_antenna_calibrate")
+                    ) {
                     Icon(Icons.Default.CenterFocusStrong, contentDescription = null)
                     Spacer(Modifier.width(8.dp))
                     Text(

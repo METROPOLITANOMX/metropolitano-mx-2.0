@@ -52,6 +52,7 @@ data class MxUiState(
     val reports: List<AppReport> = emptyList(),
     val selectedAntennaStation: AntennaStation = AntennaStation.ANTENA_1,
     val antennaVoiceEnabled: Boolean = true,
+    val paAudioMuted: Boolean = false,
     val directorUnlocked: Boolean = false,
     val activeRouletteChallenge: String? = null,
     val statusBannerMessage: String? = null,

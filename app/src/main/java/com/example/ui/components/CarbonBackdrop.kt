@@ -14,9 +14,11 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxScope
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
@@ -147,7 +149,9 @@ fun CarbonStadiumBackdrop(
                 }
             }
         }
-        content()
+        CompositionLocalProvider(LocalContentColor provides MaterialTheme.colorScheme.onBackground) {
+            content()
+        }
     }
 }
 
@@ -167,6 +171,7 @@ fun GlassRaceCard(
             .border(BorderStroke(borderWidth, strokeColor), shape),
         shape = shape,
         color = mxColors.glassCardBg,
+        contentColor = MaterialTheme.colorScheme.onSurface,
         tonalElevation = if (mxColors.isSunMode) 2.dp else 6.dp
     ) {
         content()

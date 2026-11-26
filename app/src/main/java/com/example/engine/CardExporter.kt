@@ -42,22 +42,25 @@ object CardExporter {
     }
 
     fun formatSetupShareText(riderName: String, bike: BikeSetup, isSpanish: Boolean): String {
+        val ratio = bike.effectivePinionSpur()
         return if (isSpanish) {
-            "🏁 SETUP METROPOLITANO MX PRO\n" +
-                "Piloto: $riderName (#${bike.dorsal})\n" +
-                "Moto: ${bike.modelName} [${bike.discipline}]\n" +
+            "🏁 SETUP LOSI PROMOTO [${bike.discipline.name}] — METROPOLITANO MX PRO\n" +
+                "Piloto: $riderName (#${bike.dorsal}) • ${bike.modelName}\n" +
                 "Terreno: ${bike.terrain}\n" +
-                "Horquilla: ${bike.forkOil} | Amortiguador: ${bike.shockOil}\n" +
-                "Desarrollo: ${bike.pinionSpur} | Neumáticos: ${bike.tires}\n" +
-                "Gyro MS6X: ${bike.gyroPercent}%"
+                "• Suspensión: Horquilla ${bike.forkOil} (${bike.forkSpring}) | Amort. ${bike.shockOil} (${bike.shockSpring}) | SAG ${bike.rearSagMm}\n" +
+                "• Geometría: Lean Bars ${bike.leanBarSetting} | Freno Del. ${bike.frontBrakePercent}% | Servo Saver ${bike.servoSaverSetting}\n" +
+                "• Spektrum MS6X / ESC: Gyro ${bike.gyroPercent}% (${bike.gyroMode}) | Punch ${bike.escPunch}/9 | Drag ${bike.escDragBrake}% | Max Freno ${bike.escMaxBrake}%\n" +
+                "• Desarrollo y Ruedas: $ratio | Del. ${bike.frontTire} / Tras. ${bike.rearTire}\n" +
+                "• LiPo: ${bike.lipoSpecs} (${bike.lipoCycles} ciclos)"
         } else {
-            "🏁 METROPOLITANO MX PRO SETUP\n" +
-                "Rider: $riderName (#${bike.dorsal})\n" +
-                "Bike: ${bike.modelName} [${bike.discipline}]\n" +
+            "🏁 LOSI PROMOTO SETUP [${bike.discipline.name}] — METROPOLITANO MX PRO\n" +
+                "Rider: $riderName (#${bike.dorsal}) • ${bike.modelName}\n" +
                 "Terrain: ${bike.terrain}\n" +
-                "Fork Oil: ${bike.forkOil} | Shock Oil: ${bike.shockOil}\n" +
-                "Gearing: ${bike.pinionSpur} | Tires: ${bike.tires}\n" +
-                "Gyro MS6X: ${bike.gyroPercent}%"
+                "• Suspension: Fork ${bike.forkOil} (${bike.forkSpring}) | Shock ${bike.shockOil} (${bike.shockSpring}) | SAG ${bike.rearSagMm}\n" +
+                "• Geometry: Lean Bars ${bike.leanBarSetting} | Front Brake ${bike.frontBrakePercent}% | Servo Saver ${bike.servoSaverSetting}\n" +
+                "• Spektrum MS6X / ESC: Gyro ${bike.gyroPercent}% (${bike.gyroMode}) | Punch ${bike.escPunch}/9 | Drag ${bike.escDragBrake}% | Max Brake ${bike.escMaxBrake}%\n" +
+                "• Gearing & Tires: $ratio | F: ${bike.frontTire} / R: ${bike.rearTire}\n" +
+                "• LiPo: ${bike.lipoSpecs} (${bike.lipoCycles} cycles)"
         }
     }
 

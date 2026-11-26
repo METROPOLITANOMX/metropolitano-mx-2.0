@@ -1,6 +1,7 @@
 package com.example.ui.theme
 
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Shapes
 import androidx.compose.material3.darkColorScheme
@@ -10,7 +11,11 @@ import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.Immutable
 import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.unit.dp
+
+fun contrastTextOn(background: Color): Color =
+    if (background.luminance() > 0.45f) Color(0xFF0A0C10) else Color.White
 
 @Immutable
 data class MxExtendedColors(
@@ -23,6 +28,7 @@ data class MxExtendedColors(
     val smBadge: Color,
     val telemetryGreen: Color,
     val racingRed: Color,
+    val hotlapPurple: Color,
     val subtleText: Color
 )
 
@@ -37,6 +43,7 @@ val LocalMxColors = staticCompositionLocalOf {
         smBadge = NitroCyan,
         telemetryGreen = TelemetryGreen,
         racingRed = RacingCrimson,
+        hotlapPurple = HotlapPurple,
         subtleText = TextSecondaryDark
     )
 }
@@ -108,12 +115,13 @@ fun MetropolitanoMxTheme(
             smBadge = SunCyan,
             telemetryGreen = SunGreen,
             racingRed = SunCrimson,
+            hotlapPurple = SunPurple,
             subtleText = TextSecondarySun
         )
     } else {
         MxExtendedColors(
             isSunMode = false,
-            glassCardBg = CarbonSurface.copy(alpha = 0.84f),
+            glassCardBg = CarbonSurface.copy(alpha = 0.88f),
             glassBorder = GlassBorderDark,
             goldAccent = ChampionshipGold,
             goldBright = ChampionshipGoldBright,
@@ -121,15 +129,19 @@ fun MetropolitanoMxTheme(
             smBadge = NitroCyan,
             telemetryGreen = TelemetryGreen,
             racingRed = RacingCrimson,
+            hotlapPurple = HotlapPurple,
             subtleText = TextSecondaryDark
         )
     }
 
-    CompositionLocalProvider(LocalMxColors provides extended) {
-        MaterialTheme(
-            colorScheme = colorScheme,
-            typography = AppTypography,
-            shapes = MxShapes,
+    MaterialTheme(
+        colorScheme = colorScheme,
+        typography = AppTypography,
+        shapes = MxShapes
+    ) {
+        CompositionLocalProvider(
+            LocalMxColors provides extended,
+            LocalContentColor provides colorScheme.onBackground,
             content = content
         )
     }

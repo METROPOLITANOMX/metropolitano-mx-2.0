@@ -28,6 +28,7 @@ import androidx.compose.material.icons.filled.Flag
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.Logout
 import androidx.compose.material.icons.filled.Radio
+import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material.icons.filled.Timer
 import androidx.compose.material.icons.filled.TouchApp
 import androidx.compose.material3.Button
@@ -64,9 +65,13 @@ import com.example.data.model.formatDeltaMs
 import com.example.data.model.formatLapMs
 import com.example.i18n.MxStrings
 import com.example.ui.components.CarbonStadiumBackdrop
+import com.example.ui.components.FlagAndRecordFrameOverlay
 import com.example.ui.components.GlassRaceCard
 import com.example.ui.components.MxTopHeader
+import com.example.ui.components.RiderDorsalBadge
+import com.example.ui.components.SupercrossStartGateCard
 import com.example.ui.theme.LocalMxColors
+import com.example.ui.theme.contrastTextOn
 import com.example.ui.viewmodel.MxProViewModel
 import com.example.ui.viewmodel.MxUiState
 import kotlinx.coroutines.delay
@@ -173,7 +178,10 @@ fun PilotScreen(
             }
             Button(
                 onClick = { viewModel.recordManualLapForCurrentRider() },
-                colors = ButtonDefaults.buttonColors(containerColor = mx.goldAccent),
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = mx.goldAccent,
+                    contentColor = contrastTextOn(mx.goldAccent)
+                ),
                 modifier = Modifier.fillMaxWidth().height(72.dp).testTag("transmitter_manual_lap")
             ) {
                 Text(strings.manualLap.uppercase(), style = MaterialTheme.typography.headlineMedium)
@@ -182,47 +190,60 @@ fun PilotScreen(
         return
     }
 
+    val lastHotlapAtMs = if (state.roomState.lastPaAnnouncement?.isHotlap == true) {
+        state.roomState.lastPaAnnouncement.timestampMs
+    } else 0L
+
     CarbonStadiumBackdrop {
-        Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .navigationBarsPadding()
-        ) {
-            MxTopHeader(
-                title = "${rider?.name ?: strings.iamPilot} • ${state.activeCircuit.name}",
-                isOnline = state.isOnline,
-                sunMode = state.sunMode,
-                isSpanish = strings.isSpanish,
-                onBack = onBack,
-                onToggleSunMode = { viewModel.toggleSunMode() },
-                onToggleLang = { viewModel.toggleLanguageOverride() }
-            )
-
-            TabRow(selectedTabIndex = selectedTab) {
-                Tab(selected = selectedTab == 0, onClick = { selectedTab = 0 }, text = { Text(strings.tabTrackRoom) })
-                Tab(selected = selectedTab == 1, onClick = { selectedTab = 1 }, text = { Text(strings.tabGaragePro) })
-                Tab(selected = selectedTab == 2, onClick = { selectedTab = 2 }, text = { Text(strings.tabTelemetry) })
-            }
-
-            when (selectedTab) {
-                0 -> PilotTrackRoomTab(
-                    state = state,
-                    strings = strings,
-                    viewModel = viewModel,
-                    liveNowMs = liveNowMs,
-                    myPosition = myPosition,
-                    currentLapElapsedMs = currentLapElapsedMs,
-                    onEnableTransmitterMode = { transmitterMode = true },
-                    onEnablePocketMode = { pocketMode = true },
-                    onEnableSoloAntennaMode = { soloAntennaMode = true },
-                    onLogout = {
-                        viewModel.logoutRider()
-                        onBack()
-                    }
+        Box(modifier = Modifier.fillMaxSize()) {
+            Column(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .navigationBarsPadding()
+            ) {
+                MxTopHeader(
+                    title = "${rider?.name ?: strings.iamPilot} • ${state.activeCircuit.name}",
+                    isOnline = state.isOnline,
+                    sunMode = state.sunMode,
+                    isSpanish = strings.isSpanish,
+                    onBack = onBack,
+                    onToggleSunMode = { viewModel.toggleSunMode() },
+                    onToggleLang = { viewModel.toggleLanguageOverride() },
+                    paMuted = state.paAudioMuted,
+                    onTogglePaMute = { viewModel.togglePaAudioMute() }
                 )
-                1 -> PilotGarageProTab(state = state, strings = strings, viewModel = viewModel)
-                else -> PilotTelemetryTab(state = state, strings = strings)
+
+                TabRow(selectedTabIndex = selectedTab) {
+                    Tab(selected = selectedTab == 0, onClick = { selectedTab = 0 }, text = { Text(strings.tabTrackRoom) })
+                    Tab(selected = selectedTab == 1, onClick = { selectedTab = 1 }, text = { Text(strings.tabGaragePro) })
+                    Tab(selected = selectedTab == 2, onClick = { selectedTab = 2 }, text = { Text(strings.tabTelemetry) })
+                }
+
+                when (selectedTab) {
+                    0 -> PilotTrackRoomTab(
+                        state = state,
+                        strings = strings,
+                        viewModel = viewModel,
+                        liveNowMs = liveNowMs,
+                        myPosition = myPosition,
+                        currentLapElapsedMs = currentLapElapsedMs,
+                        onEnableTransmitterMode = { transmitterMode = true },
+                        onEnablePocketMode = { pocketMode = true },
+                        onEnableSoloAntennaMode = { soloAntennaMode = true },
+                        onLogout = {
+                            viewModel.logoutRider()
+                            onBack()
+                        }
+                    )
+                    1 -> PilotGarageProTab(state = state, strings = strings, viewModel = viewModel)
+                    else -> PilotTelemetryTab(state = state, strings = strings)
+                }
             }
+            FlagAndRecordFrameOverlay(
+                flagState = state.roomState.flagState,
+                lastHotlapAtMs = lastHotlapAtMs,
+                nowMs = liveNowMs
+            )
         }
     }
 }
@@ -295,11 +316,46 @@ private fun PilotTrackRoomTab(
                         style = MaterialTheme.typography.displayMedium,
                         color = mx.racingRed
                     )
+                } else if (room.sessionPhase == SessionPhase.WARMUP && room.phaseEndTimeMs > liveNowMs) {
+                    val remSec = ((room.phaseEndTimeMs - liveNowMs) / 1000L).coerceAtLeast(0L)
+                    val mins = remSec / 60L
+                    val secs = remSec % 60L
+                    Text(
+                        text = if (strings.isSpanish) {
+                            "WARM-UP CAPTURA: %02d:%02d".format(mins, secs)
+                        } else {
+                            "WARM-UP CAPTURE: %02d:%02d".format(mins, secs)
+                        },
+                        style = MaterialTheme.typography.headlineMedium,
+                        color = mx.smBadge
+                    )
+                } else if (room.sessionPhase == SessionPhase.RACING && room.phaseEndTimeMs > liveNowMs) {
+                    val remSec = ((room.phaseEndTimeMs - liveNowMs) / 1000L).coerceAtLeast(0L)
+                    val mins = remSec / 60L
+                    val secs = remSec % 60L
+                    Text(
+                        text = if (strings.isSpanish) {
+                            "TIEMPO RESTANTE: %02d:%02d".format(mins, secs)
+                        } else {
+                            "RACE REMAINING: %02d:%02d".format(mins, secs)
+                        },
+                        style = MaterialTheme.typography.headlineMedium,
+                        color = mx.telemetryGreen
+                    )
                 }
             }
         }
 
-        // Live Chronometer + Position + Manual Lap
+        SupercrossStartGateCard(
+            sessionPhase = room.sessionPhase,
+            phaseEndTimeMs = room.phaseEndTimeMs,
+            phaseStartTimeMs = room.phaseStartTimeMs,
+            nowMs = liveNowMs,
+            isSpanish = strings.isSpanish
+        )
+
+        // Live Chronometer + Position + Dorsal + Manual Lap
+        val myColorProfile = rider?.let { r -> state.colorProfiles.firstOrNull { it.riderId == r.id } }
         GlassRaceCard(accentBorder = mx.goldAccent.copy(alpha = 0.65f)) {
             Column(
                 modifier = Modifier.fillMaxWidth().padding(16.dp),
@@ -307,9 +363,18 @@ private fun PilotTrackRoomTab(
             ) {
                 Row(
                     modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Text("${strings.currentPos}: P${if (myPosition > 0) myPosition else "-"}", style = MaterialTheme.typography.titleLarge, color = mx.goldAccent)
+                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        RiderDorsalBadge(
+                            dorsal = roomRider?.dorsal ?: state.activeBike?.dorsal ?: "01",
+                            discipline = roomRider?.discipline ?: state.activeCircuit.surface,
+                            colorProfile = myColorProfile,
+                            position = if (myPosition > 0) myPosition else null
+                        )
+                        Text("${strings.currentPos}: P${if (myPosition > 0) myPosition else "-"}", style = MaterialTheme.typography.titleLarge, color = mx.goldAccent)
+                    }
                     Text("${strings.totalLaps}: ${roomRider?.lapsCount ?: 0}", style = MaterialTheme.typography.titleLarge)
                 }
                 Spacer(Modifier.height(10.dp))
@@ -345,7 +410,10 @@ private fun PilotTrackRoomTab(
                 Spacer(Modifier.height(12.dp))
                 Button(
                     onClick = { viewModel.recordManualLapForCurrentRider() },
-                    colors = ButtonDefaults.buttonColors(containerColor = mx.goldAccent),
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = mx.goldAccent,
+                        contentColor = contrastTextOn(mx.goldAccent)
+                    ),
                     modifier = Modifier
                         .fillMaxWidth()
                         .minimumInteractiveComponentSize()
@@ -380,7 +448,10 @@ private fun PilotTrackRoomTab(
 
         Button(
             onClick = onEnableSoloAntennaMode,
-            colors = ButtonDefaults.buttonColors(containerColor = mx.smBadge),
+            colors = ButtonDefaults.buttonColors(
+                containerColor = mx.smBadge,
+                contentColor = contrastTextOn(mx.smBadge)
+            ),
             modifier = Modifier
                 .fillMaxWidth()
                 .minimumInteractiveComponentSize()
@@ -427,9 +498,38 @@ private fun PilotTrackRoomTab(
                         modifier = Modifier.weight(1f).minimumInteractiveComponentSize()
                     ) { Text(strings.randomGate, maxLines = 1) }
                 }
+                if (room.sessionPhase == SessionPhase.WARMUP ||
+                    room.sessionPhase == SessionPhase.RACING ||
+                    room.sessionPhase == SessionPhase.COUNTDOWN_30
+                ) {
+                    Button(
+                        onClick = { viewModel.stopSession() },
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = mx.racingRed,
+                            contentColor = contrastTextOn(mx.racingRed)
+                        ),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .minimumInteractiveComponentSize()
+                            .testTag("friendly_stop_session_button")
+                    ) {
+                        Icon(Icons.Default.Stop, contentDescription = null)
+                        Spacer(Modifier.width(6.dp))
+                        Text(
+                            if (room.sessionPhase == SessionPhase.WARMUP) {
+                                if (strings.isSpanish) "STOP WARM-UP" else "STOP WARM-UP"
+                            } else {
+                                if (strings.isSpanish) "STOP CARRERA" else "STOP RACE"
+                            }
+                        )
+                    }
+                }
                 Button(
                     onClick = { viewModel.spinCrazyMxRoulette() },
-                    colors = ButtonDefaults.buttonColors(containerColor = mx.racingRed),
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = mx.racingRed,
+                        contentColor = contrastTextOn(mx.racingRed)
+                    ),
                     modifier = Modifier.fillMaxWidth().minimumInteractiveComponentSize().testTag("crazy_roulette_button")
                 ) {
                     Icon(Icons.Default.Casino, contentDescription = null)

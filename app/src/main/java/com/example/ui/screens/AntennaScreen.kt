@@ -2,6 +2,7 @@ package com.example.ui.screens
 
 import android.Manifest
 import android.content.pm.PackageManager
+import android.os.SystemClock
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.camera.core.CameraSelector
@@ -48,6 +49,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -72,9 +74,13 @@ import com.example.i18n.MxStrings
 import com.example.ui.components.CarbonStadiumBackdrop
 import com.example.ui.components.GlassRaceCard
 import com.example.ui.theme.LocalMxColors
+import com.example.ui.theme.contrastTextOn
 import com.example.ui.viewmodel.MxProViewModel
 import com.example.ui.viewmodel.MxUiState
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
 import java.util.concurrent.Executors
+import java.util.concurrent.atomic.AtomicLong
 
 @Composable
 fun AntennaScreen(
@@ -101,12 +107,19 @@ fun AntennaScreen(
     val visionEngine = remember { VisionTimingEngine() }
     val analysisExecutor = remember { Executors.newSingleThreadExecutor() }
     var lastHandledCalCmd by remember { mutableLongStateOf(0L) }
-    var lastSnapshotSentMs by remember { mutableLongStateOf(0L) }
+    val lastSnapshotMonoMs = remember { AtomicLong(0L) }
     var lastDetectedColors by remember { mutableStateOf<List<LabSample>>(emptyList()) }
     var localCalibrated by remember { mutableStateOf(false) }
+    var cameraError by remember { mutableStateOf<String?>(null) }
+    var boundProvider by remember { mutableStateOf<ProcessCameraProvider?>(null) }
 
     val activeConfig = state.antennas[state.selectedAntennaStation.id]
         ?: AntennaConfig(antennaId = state.selectedAntennaStation.id, circuitId = state.activeCircuit.id)
+
+    val latestConfig by rememberUpdatedState(activeConfig)
+    val latestProfiles by rememberUpdatedState(state.colorProfiles)
+    val latestStation by rememberUpdatedState(state.selectedAntennaStation)
+    val latestIsSpanish by rememberUpdatedState(strings.isSpanish)
 
     LaunchedEffect(activeConfig.calibrateCommandAtMs) {
         if (activeConfig.calibrateCommandAtMs > lastHandledCalCmd && activeConfig.calibrateCommandAtMs > 0L) {
@@ -117,8 +130,27 @@ fun AntennaScreen(
         }
     }
 
+    LaunchedEffect(stationChosen, state.selectedAntennaStation, localCalibrated) {
+        if (stationChosen) {
+            while (isActive) {
+                viewModel.sendAntennaHeartbeat(
+                    station = latestStation,
+                    isCalibrated = localCalibrated,
+                    status = if (localCalibrated) "READY" else "WAITING_CALIBRATION"
+                )
+                delay(4000L)
+            }
+        }
+    }
+
     DisposableEffect(Unit) {
-        onDispose { analysisExecutor.shutdown() }
+        onDispose {
+            try {
+                boundProvider?.unbindAll()
+            } catch (_: Exception) {
+            }
+            analysisExecutor.shutdown()
+        }
     }
 
     if (!stationChosen) {
@@ -136,7 +168,11 @@ fun AntennaScreen(
                 Spacer(Modifier.height(12.dp))
                 Text(strings.antennaChooseStation, style = MaterialTheme.typography.headlineLarge)
                 Spacer(Modifier.height(6.dp))
-                Text(strings.antennaRemoteHint, style = MaterialTheme.typography.bodyMedium, color = mx.subtleText)
+                Text(
+                    "${strings.antennaRemoteHint}\n${state.activeCircuit.name}",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = mx.subtleText
+                )
                 Spacer(Modifier.height(22.dp))
 
                 val stations = listOf(
@@ -151,7 +187,10 @@ fun AntennaScreen(
                             stationChosen = true
                             if (!hasCameraPerm) camPermLauncher.launch(Manifest.permission.CAMERA)
                         },
-                        colors = ButtonDefaults.buttonColors(containerColor = mx.goldAccent),
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = mx.goldAccent,
+                            contentColor = contrastTextOn(mx.goldAccent)
+                        ),
                         modifier = Modifier
                             .fillMaxWidth()
                             .padding(vertical = 6.dp)
@@ -174,40 +213,46 @@ fun AntennaScreen(
         if (hasCameraPerm) {
             AndroidView(
                 factory = { ctx ->
-                    val previewView = PreviewView(ctx)
+                    val previewView = PreviewView(ctx).apply {
+                        implementationMode = PreviewView.ImplementationMode.COMPATIBLE
+                    }
                     val cameraProviderFuture = ProcessCameraProvider.getInstance(ctx)
                     cameraProviderFuture.addListener({
-                        val cameraProvider = cameraProviderFuture.get()
-                        val preview = Preview.Builder().build().also {
-                            it.surfaceProvider = previewView.surfaceProvider
-                        }
-                        val analysis = ImageAnalysis.Builder()
-                            .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
-                            .build()
-                        analysis.setAnalyzer(analysisExecutor) { imageProxy ->
-                            val now = viewModel.syncedNowMs()
-                            val sendSnap = (now - lastSnapshotSentMs) > 2500L
-                            val res = visionEngine.processFrame(
-                                image = imageProxy,
-                                config = activeConfig,
-                                profiles = state.colorProfiles,
-                                syncedNowMs = now,
-                                isSpanish = strings.isSpanish,
-                                captureLiveSnapshot = sendSnap
-                            )
-                            if (res != null) {
-                                if (sendSnap && res.snapshotBase64.isNotBlank()) {
-                                    lastSnapshotSentMs = now
-                                    viewModel.pushAntennaLiveSnapshot(state.selectedAntennaStation, res.snapshotBase64)
-                                }
-                                if (res.triggered) {
-                                    lastDetectedColors = res.detectedColors
-                                    viewModel.handleVisionDetection(state.selectedAntennaStation, res)
+                        try {
+                            val cameraProvider = cameraProviderFuture.get()
+                            boundProvider = cameraProvider
+                            val preview = Preview.Builder().build().also {
+                                it.surfaceProvider = previewView.surfaceProvider
+                            }
+                            val analysis = ImageAnalysis.Builder()
+                                .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
+                                .build()
+                            analysis.setAnalyzer(analysisExecutor) { imageProxy ->
+                                try {
+                                    val nowMono = SystemClock.elapsedRealtime()
+                                    val sendSnap = (nowMono - lastSnapshotMonoMs.get()) > 1500L
+                                    val res = visionEngine.processFrame(
+                                        image = imageProxy,
+                                        config = latestConfig,
+                                        profiles = latestProfiles,
+                                        syncedNowMs = viewModel.syncedNowMs(),
+                                        isSpanish = latestIsSpanish,
+                                        captureLiveSnapshot = sendSnap
+                                    )
+                                    if (res != null) {
+                                        if (sendSnap && res.snapshotBase64.isNotBlank()) {
+                                            lastSnapshotMonoMs.set(nowMono)
+                                            viewModel.pushAntennaLiveSnapshot(latestStation, res.snapshotBase64)
+                                        }
+                                        if (res.triggered) {
+                                            lastDetectedColors = res.detectedColors
+                                            viewModel.handleVisionDetection(latestStation, res)
+                                        }
+                                    }
+                                } finally {
+                                    imageProxy.close()
                                 }
                             }
-                            imageProxy.close()
-                        }
-                        try {
                             cameraProvider.unbindAll()
                             cameraProvider.bindToLifecycle(
                                 lifecycleOwner,
@@ -215,13 +260,25 @@ fun AntennaScreen(
                                 preview,
                                 analysis
                             )
-                        } catch (_: Exception) {
+                            cameraError = null
+                        } catch (e: Exception) {
+                            cameraError = e.localizedMessage ?: "Camera error"
                         }
                     }, ContextCompat.getMainExecutor(ctx))
                     previewView
                 },
                 modifier = Modifier.fillMaxSize()
             )
+            if (cameraError != null) {
+                Text(
+                    text = "Camera error: $cameraError",
+                    color = Color.White,
+                    modifier = Modifier
+                        .align(Alignment.Center)
+                        .background(Color.Red.copy(alpha = 0.8f), RoundedCornerShape(8.dp))
+                        .padding(12.dp)
+                )
+            }
         } else {
             Column(
                 modifier = Modifier.align(Alignment.Center).padding(24.dp),
@@ -287,7 +344,7 @@ fun AntennaScreen(
             GlassRaceCard {
                 Column(modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp)) {
                     Text(
-                        text = state.selectedAntennaStation.name,
+                        text = "${state.selectedAntennaStation.name} • ${state.activeCircuit.name}",
                         style = MaterialTheme.typography.titleMedium,
                         color = mx.goldAccent
                     )
@@ -295,7 +352,11 @@ fun AntennaScreen(
                         text = if (!localCalibrated) {
                             if (strings.isSpanish) "Esperando Calibración de Dirección" else "Waiting for Director Calibration"
                         } else {
-                            val modeLabel = if (activeConfig.detectionMode == DetectionMode.FAIRING_COLOR) "CIE Lab Color" else "Any Pass"
+                            val modeLabel = when (activeConfig.detectionMode) {
+                                DetectionMode.FAIRING_COLOR -> "CIE Lab Color"
+                                DetectionMode.SINGLE_COLOR -> if (strings.isSpanish) "Solo 1 Color" else "Single Color"
+                                DetectionMode.ANY_PASS -> if (strings.isSpanish) "Cualquier Paso" else "Any Pass"
+                            }
                             "${if (strings.isSpanish) "LISTA" else "READY"} • $modeLabel • ROI ${activeConfig.roiSize.name}"
                         },
                         style = MaterialTheme.typography.labelSmall,
