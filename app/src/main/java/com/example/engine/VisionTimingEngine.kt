@@ -2,17 +2,22 @@ package com.example.engine
 
 import android.graphics.Bitmap
 import android.graphics.Color
+import android.os.SystemClock
 import android.util.Base64
 import androidx.camera.core.ImageProxy
 import com.example.data.model.AntennaConfig
 import com.example.data.model.DetectionMode
 import com.example.data.model.LabSample
 import com.example.data.model.LineOrientation
+import com.example.data.model.PassingDirection
 import com.example.data.model.RiderColorProfile
+import com.google.android.gms.tasks.Tasks
+import com.google.mlkit.vision.common.InputImage
+import com.google.mlkit.vision.text.TextRecognition
+import com.google.mlkit.vision.text.latin.TextRecognizerOptions
 import java.io.ByteArrayOutputStream
+import java.util.concurrent.TimeUnit
 import kotlin.math.abs
-import kotlin.math.max
-import kotlin.math.min
 import kotlin.math.pow
 import kotlin.math.sqrt
 
@@ -21,47 +26,65 @@ data class VisionDetectionResult(
     val triggerTimestampMs: Long,
     val detectedColors: List<LabSample>,
     val matchedProfile: RiderColorProfile?,
+    val matchConfidence: Float,
+    val detectedDorsal: String,
+    val estimatedFps: Int,
     val occupancyRatio: Float,
     val snapshotBase64: String,
     val photoFinishBase64: String?
 )
 
 /**
- * Real-time Computer Vision Engine for RC 1/4 Finish Line Antennae.
- * Implements:
- * 1. ROI "Tunnel Effect" clipping (ignoring movement outside central tunnel).
- * 2. Empty-track calibration baseline subtraction.
- * 3. Anti-vibration consecutive-frame & occupancy gate.
- * 4. Trigger & Color Separation: locks exact front-wheel crossing timestamp while
- *    accumulating fairing + rider silhouette pixels across subsequent frames, then
- *    matches dominant colors in perceptual CIE Lab space (robust to bike lean/lighting).
+ * Real-time Computer Vision Engine 2.0 for RC 1/4 Finish Line Antennae:
+ * 1. ROI "Tunnel Effect" clipping + directional motion gate (rejects reverse traffic).
+ * 2. Adaptive EMA Background Model (automatically tracks gradual cloud/sunlight changes) + shadow suppression.
+ * 3. Sub-frame linear velocity interpolation (reduces frame quantization error).
+ * 4. Multi-frame fairing pixel accumulation matched in perceptual CIE Lab chroma space + confidence margin.
+ * 5. Trigger-only HD crop (360x270) + synchronous on-device ML Kit Dorsal OCR fallback.
  */
 class VisionTimingEngine {
 
-    private var baselineR: IntArray? = null
-    private var baselineG: IntArray? = null
-    private var baselineB: IntArray? = null
+    private var baselineR: FloatArray? = null
+    private var baselineG: FloatArray? = null
+    private var baselineB: FloatArray? = null
     private var baseW = 0
     private var baseH = 0
 
     private var consecutiveMotionFrames = 0
+    private var prevOccupancy = 0f
     private var cooldownActive = false
     private var lastTriggerMs = 0L
+
+    // FPS tracking & motion centroid for direction lock
+    private var lastFrameMonoMs = 0L
+    private var emaFrameIntervalMs = 33f
+    private var entryCentroidX = -1f
+    private var entryCentroidY = -1f
+    private var lastCentroidX = -1f
+    private var lastCentroidY = -1f
 
     // Trigger & Color Separation accumulation state
     private var accumulatingFairing = false
     private var frozenTriggerMs = 0L
     private var frozenPhotoFinishB64: String? = null
+    private var frozenDorsalHint = ""
     private var accumulationFramesLeft = 0
     private val accumulatedRgb = mutableListOf<Int>()
 
     private var calibrationPending = false
 
+    private val ocrClient by lazy {
+        TextRecognition.getClient(TextRecognizerOptions.DEFAULT_OPTIONS)
+    }
+
     fun requestLocalCalibration() {
         calibrationPending = true
         consecutiveMotionFrames = 0
+        prevOccupancy = 0f
         cooldownActive = false
         accumulatingFairing = false
+        entryCentroidX = -1f
+        entryCentroidY = -1f
         accumulatedRgb.clear()
     }
 
@@ -75,6 +98,14 @@ class VisionTimingEngine {
         isSpanish: Boolean,
         captureLiveSnapshot: Boolean
     ): VisionDetectionResult? {
+        val nowMono = SystemClock.elapsedRealtime()
+        if (lastFrameMonoMs > 0L) {
+            val dt = (nowMono - lastFrameMonoMs).coerceIn(8L, 250L).toFloat()
+            emaFrameIntervalMs = emaFrameIntervalMs * 0.85f + dt * 0.15f
+        }
+        lastFrameMonoMs = nowMono
+        val currentFps = (1000f / emaFrameIntervalMs).toInt().coerceIn(5, 120)
+
         val rgbBitmap = imageProxyToScaledBitmap(image, targetW = 160, targetH = 120) ?: return null
         val w = rgbBitmap.width
         val h = rgbBitmap.height
@@ -83,9 +114,9 @@ class VisionTimingEngine {
 
         if (calibrationPending || baselineR == null || baseW != w || baseH != h) {
             if (calibrationPending) {
-                baselineR = IntArray(w * h) { Color.red(pixels[it]) }
-                baselineG = IntArray(w * h) { Color.green(pixels[it]) }
-                baselineB = IntArray(w * h) { Color.blue(pixels[it]) }
+                baselineR = FloatArray(w * h) { Color.red(pixels[it]).toFloat() }
+                baselineG = FloatArray(w * h) { Color.green(pixels[it]).toFloat() }
+                baselineB = FloatArray(w * h) { Color.blue(pixels[it]).toFloat() }
                 baseW = w
                 baseH = h
                 calibrationPending = false
@@ -96,6 +127,9 @@ class VisionTimingEngine {
                 triggerTimestampMs = 0L,
                 detectedColors = emptyList(),
                 matchedProfile = null,
+                matchConfidence = 0f,
+                detectedDorsal = "",
+                estimatedFps = currentFps,
                 occupancyRatio = 0f,
                 snapshotBase64 = snap,
                 photoFinishBase64 = null
@@ -115,10 +149,12 @@ class VisionTimingEngine {
         val roiTop = (centerY - roiH / 2).coerceIn(0, h - roiH)
         val roiBottom = (roiTop + roiH).coerceIn(roiTop + 1, h)
 
-        // Trigger line strip inside ROI
+        // Trigger line strip inside ROI + motion centroid
         val lineStripHalf = 3
         val linePixelsTotal: Int
         var lineForegroundCount = 0
+        var sumX = 0f
+        var sumY = 0f
 
         if (config.lineOrientation == LineOrientation.VERTICAL) {
             val lineX = (roiLeft + roiW * config.linePosition).toInt().coerceIn(roiLeft, roiRight - 1)
@@ -130,6 +166,8 @@ class VisionTimingEngine {
                     val idx = y * w + x
                     if (isForeground(pixels[idx], bR[idx], bG[idx], bB[idx])) {
                         lineForegroundCount++
+                        sumX += x
+                        sumY += y
                     }
                 }
             }
@@ -143,40 +181,87 @@ class VisionTimingEngine {
                     val idx = y * w + x
                     if (isForeground(pixels[idx], bR[idx], bG[idx], bB[idx])) {
                         lineForegroundCount++
+                        sumX += x
+                        sumY += y
                     }
                 }
             }
         }
 
         val occupancy = if (linePixelsTotal > 0) lineForegroundCount.toFloat() / linePixelsTotal else 0f
+        if (lineForegroundCount > 0) {
+            val cx = sumX / lineForegroundCount
+            val cy = sumY / lineForegroundCount
+            if (entryCentroidX < 0f) {
+                entryCentroidX = cx
+                entryCentroidY = cy
+            }
+            lastCentroidX = cx
+            lastCentroidY = cy
+        }
 
-        // Collect silhouette foreground pixels inside ROI when accumulating fairing/rider body
+        // Accumulate rider body / fairing pixels across subsequent frames after crossing line
         if (accumulatingFairing) {
+            var roiSumX = 0f
+            var roiSumY = 0f
+            var roiFgCount = 0
             for (y in roiTop until roiBottom step 2) {
                 for (x in roiLeft until roiRight step 2) {
                     val idx = y * w + x
                     if (isForeground(pixels[idx], bR[idx], bG[idx], bB[idx])) {
                         accumulatedRgb.add(pixels[idx])
+                        roiSumX += x
+                        roiSumY += y
+                        roiFgCount++
                     }
                 }
+            }
+            if (roiFgCount > 0) {
+                lastCentroidX = roiSumX / roiFgCount
+                lastCentroidY = roiSumY / roiFgCount
             }
             accumulationFramesLeft--
             if (accumulationFramesLeft <= 0) {
                 accumulatingFairing = false
                 val singleOnly = config.detectionMode == DetectionMode.SINGLE_COLOR
                 val colors = extractDominantLabColors(accumulatedRgb, isSpanish, singleOnly = singleOnly)
-                val matched = matchRiderProfile(colors, profiles)
-                val snap = encodeBitmapBase64(rgbBitmap, 55)
+                val (matched, confidence) = matchRiderProfileWithConfidence(colors, profiles)
+                val snap = encodeBitmapBase64(rgbBitmap, 58)
+                val dorsalOut = frozenDorsalHint
+                val pfB64 = frozenPhotoFinishB64
                 accumulatedRgb.clear()
+                entryCentroidX = -1f
+                entryCentroidY = -1f
                 return VisionDetectionResult(
                     triggered = true,
                     triggerTimestampMs = frozenTriggerMs,
                     detectedColors = colors,
                     matchedProfile = matched,
+                    matchConfidence = confidence,
+                    detectedDorsal = dorsalOut,
+                    estimatedFps = currentFps,
                     occupancyRatio = occupancy,
                     snapshotBase64 = snap,
-                    photoFinishBase64 = frozenPhotoFinishB64
+                    photoFinishBase64 = pfB64
                 )
+            }
+        }
+
+        // Adaptive EMA background update when track is calm (handles passing clouds & light drift)
+        if (!accumulatingFairing && !cooldownActive && occupancy < config.antiVibration.minOccupancy * 0.35f) {
+            entryCentroidX = -1f
+            entryCentroidY = -1f
+            val alpha = 0.025f
+            val inv = 1f - alpha
+            for (y in roiTop until roiBottom) {
+                val rowOff = y * w
+                for (x in roiLeft until roiRight) {
+                    val i = rowOff + x
+                    val p = pixels[i]
+                    bR[i] = bR[i] * inv + Color.red(p) * alpha
+                    bG[i] = bG[i] * inv + Color.green(p) * alpha
+                    bB[i] = bB[i] * inv + Color.blue(p) * alpha
+                }
             }
         }
 
@@ -185,12 +270,16 @@ class VisionTimingEngine {
             if (occupancy < config.antiVibration.minOccupancy * 0.45f && syncedNowMs - lastTriggerMs > 900L) {
                 cooldownActive = false
             }
+            prevOccupancy = occupancy
             val snap = if (captureLiveSnapshot) encodeBitmapBase64(rgbBitmap, 48) else ""
             return VisionDetectionResult(
                 triggered = false,
                 triggerTimestampMs = 0L,
                 detectedColors = emptyList(),
                 matchedProfile = null,
+                matchConfidence = 0f,
+                detectedDorsal = "",
+                estimatedFps = currentFps,
                 occupancyRatio = occupancy,
                 snapshotBase64 = snap,
                 photoFinishBase64 = null
@@ -201,13 +290,47 @@ class VisionTimingEngine {
             consecutiveMotionFrames++
         } else {
             consecutiveMotionFrames = 0
+            if (occupancy < config.antiVibration.minOccupancy * 0.3f) {
+                entryCentroidX = -1f
+                entryCentroidY = -1f
+            }
         }
 
         val thresholdFrames = config.antiVibration.requiredFrames
         if (consecutiveMotionFrames >= thresholdFrames && !accumulatingFairing) {
+            // Directional sanity check
+            if (!passesDirectionFilter(config.directionFilter)) {
+                consecutiveMotionFrames = 0
+                prevOccupancy = occupancy
+                val snap = if (captureLiveSnapshot) encodeBitmapBase64(rgbBitmap, 48) else ""
+                return VisionDetectionResult(
+                    triggered = false,
+                    triggerTimestampMs = 0L,
+                    detectedColors = emptyList(),
+                    matchedProfile = null,
+                    matchConfidence = 0f,
+                    detectedDorsal = "",
+                    estimatedFps = currentFps,
+                    occupancyRatio = occupancy,
+                    snapshotBase64 = snap,
+                    photoFinishBase64 = null
+                )
+            }
+
             consecutiveMotionFrames = 0
             cooldownActive = true
             lastTriggerMs = syncedNowMs
+
+            // Sub-frame crossing timestamp interpolation (~4ms accuracy)
+            val occSlope = (occupancy - prevOccupancy).coerceAtLeast(0.05f)
+            val overshootFrac = ((occupancy - config.antiVibration.minOccupancy) / occSlope).coerceIn(0f, 1f)
+            val subFrameOffsetMs = ((1f - overshootFrac) * (emaFrameIntervalMs * 0.55f)).toLong().coerceIn(0L, 26L)
+            val exactCrossingMs = syncedNowMs - subFrameOffsetMs
+
+            // Extract HD Photo-Finish & run fast local ML Kit dorsal OCR ONLY on trigger
+            val hdBitmap = imageProxyToScaledBitmap(image, targetW = 360, targetH = 270) ?: rgbBitmap
+            val dorsalDetected = extractDorsalOnDevice(hdBitmap)
+            val hdPhotoFinishB64 = encodeBitmapBase64(hdBitmap, 74)
 
             // Extract immediate ROI foreground pixels
             val roiFg = mutableListOf<Int>()
@@ -222,9 +345,9 @@ class VisionTimingEngine {
 
             when (config.detectionMode) {
                 DetectionMode.FAIRING_COLOR, DetectionMode.SINGLE_COLOR -> {
-                    // Freeze exact front-wheel crossing time and accumulate central body silhouette
-                    frozenTriggerMs = syncedNowMs
-                    frozenPhotoFinishB64 = encodeBitmapBase64(rgbBitmap, 60)
+                    frozenTriggerMs = exactCrossingMs
+                    frozenPhotoFinishB64 = hdPhotoFinishB64
+                    frozenDorsalHint = dorsalDetected
                     accumulatedRgb.clear()
                     accumulatedRgb.addAll(roiFg)
                     accumulatingFairing = true
@@ -232,39 +355,78 @@ class VisionTimingEngine {
                 }
                 DetectionMode.ANY_PASS -> {
                     val colors = extractDominantLabColors(roiFg, isSpanish, singleOnly = false)
-                    val matched = matchRiderProfile(colors, profiles)
-                    val photoFinish = encodeBitmapBase64(rgbBitmap, 60)
+                    val (matched, confidence) = matchRiderProfileWithConfidence(colors, profiles)
+                    prevOccupancy = occupancy
                     return VisionDetectionResult(
                         triggered = true,
-                        triggerTimestampMs = syncedNowMs,
+                        triggerTimestampMs = exactCrossingMs,
                         detectedColors = colors,
                         matchedProfile = matched,
+                        matchConfidence = confidence,
+                        detectedDorsal = dorsalDetected,
+                        estimatedFps = currentFps,
                         occupancyRatio = occupancy,
-                        snapshotBase64 = photoFinish,
-                        photoFinishBase64 = photoFinish
+                        snapshotBase64 = hdPhotoFinishB64,
+                        photoFinishBase64 = hdPhotoFinishB64
                     )
                 }
             }
         }
 
+        prevOccupancy = occupancy
         val snap = if (captureLiveSnapshot) encodeBitmapBase64(rgbBitmap, 48) else ""
         return VisionDetectionResult(
             triggered = false,
             triggerTimestampMs = 0L,
             detectedColors = emptyList(),
             matchedProfile = null,
+            matchConfidence = 0f,
+            detectedDorsal = "",
+            estimatedFps = currentFps,
             occupancyRatio = occupancy,
             snapshotBase64 = snap,
             photoFinishBase64 = null
         )
     }
 
-    private fun isForeground(pixel: Int, baseR: Int, baseG: Int, baseB: Int): Boolean {
-        val r = Color.red(pixel)
-        val g = Color.green(pixel)
-        val b = Color.blue(pixel)
-        val diff = abs(r - baseR) + abs(g - baseG) + abs(b - baseB)
-        return diff > 72
+    private fun passesDirectionFilter(filter: PassingDirection): Boolean {
+        if (filter == PassingDirection.ANY || entryCentroidX < 0f) return true
+        val dx = lastCentroidX - entryCentroidX
+        val dy = lastCentroidY - entryCentroidY
+        return when (filter) {
+            PassingDirection.ANY -> true
+            PassingDirection.LEFT_TO_RIGHT -> dx >= -2.5f
+            PassingDirection.RIGHT_TO_LEFT -> dx <= 2.5f
+            PassingDirection.TOP_TO_BOTTOM -> dy >= -2.5f
+            PassingDirection.BOTTOM_TO_TOP -> dy <= 2.5f
+        }
+    }
+
+    /**
+     * Shadow-resistant foreground detector:
+     * Rejects mild luminance-only shadows where R, G, B darken equally unless total change is large.
+     */
+    private fun isForeground(pixel: Int, baseR: Float, baseG: Float, baseB: Float): Boolean {
+        val dr = Color.red(pixel) - baseR
+        val dg = Color.green(pixel) - baseG
+        val db = Color.blue(pixel) - baseB
+        val totalDiff = abs(dr) + abs(dg) + abs(db)
+        if (totalDiff > 108f) return true
+        if (totalDiff < 62f) return false
+        val chromaShift = abs(dr - dg) + abs(dg - db)
+        return chromaShift > 22f
+    }
+
+    private fun extractDorsalOnDevice(bitmap: Bitmap): String {
+        return try {
+            val input = InputImage.fromBitmap(bitmap, 0)
+            val text = Tasks.await(ocrClient.process(input), 110L, TimeUnit.MILLISECONDS)
+            val regex = Regex("""\b\d{1,3}\b""")
+            val candidates = regex.findAll(text.text).map { it.value }.toList()
+            candidates.firstOrNull { it.isNotBlank() } ?: ""
+        } catch (_: Exception) {
+            ""
+        }
     }
 
     private fun extractDominantLabColors(
@@ -281,7 +443,6 @@ class VisionTimingEngine {
         }
         val neutralLabels = setOf("Negro", "Black", "Gris", "Gray", "Blanco", "White")
         val ordered = if (singleOnly) {
-            // In single-color capture mode, prioritize vibrant fairing colors over neutral tire/track pixels
             val vibrant = buckets.entries.filter { it.key !in neutralLabels && it.value.size >= 6 }
             if (vibrant.isNotEmpty()) {
                 vibrant.sortedByDescending { it.value.size }.take(1)
@@ -302,19 +463,17 @@ class VisionTimingEngine {
         }
     }
 
-    private fun matchRiderProfile(
+    private fun matchRiderProfileWithConfidence(
         detected: List<LabSample>,
         profiles: List<RiderColorProfile>
-    ): RiderColorProfile? {
-        if (detected.isEmpty() || profiles.isEmpty()) return null
-        var bestProfile: RiderColorProfile? = null
-        var bestScore = Double.MAX_VALUE
+    ): Pair<RiderColorProfile?, Float> {
+        if (detected.isEmpty() || profiles.isEmpty()) return null to 0f
+        val scored = mutableListOf<Pair<RiderColorProfile, Double>>()
         for (profile in profiles) {
             if (profile.samples.isEmpty()) continue
             var totalDist = 0.0
             for (d in detected) {
                 val minSampleDist = profile.samples.minOf { s ->
-                    // Weight chrominance (a,b) higher than lightness (L) to ignore bike lean shadow
                     val dl = (d.l - s.l) * 0.35
                     val da = d.a - s.a
                     val db = d.b - s.b
@@ -322,13 +481,20 @@ class VisionTimingEngine {
                 }
                 totalDist += minSampleDist
             }
-            val avgDist = totalDist / detected.size
-            if (avgDist < bestScore && avgDist < 34.0) {
-                bestScore = avgDist
-                bestProfile = profile
-            }
+            scored += profile to (totalDist / detected.size)
         }
-        return bestProfile
+        if (scored.isEmpty()) return null to 0f
+        scored.sortBy { it.second }
+        val (bestProfile, bestDist) = scored.first()
+        if (bestDist >= 36.0) return null to 0f
+
+        val closeness = ((36.0 - bestDist) / 36.0).toFloat().coerceIn(0f, 1f)
+        val marginBoost = if (scored.size >= 2) {
+            val secondDist = scored[1].second
+            ((secondDist - bestDist) / 20.0).toFloat().coerceIn(0f, 0.35f)
+        } else 0.28f
+        val confidence = (closeness * 0.65f + marginBoost).coerceIn(0.1f, 0.99f)
+        return bestProfile to confidence
     }
 
     private fun rgbToLab(color: Int): Triple<Double, Double, Double> {

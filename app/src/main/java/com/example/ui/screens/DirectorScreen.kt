@@ -81,6 +81,7 @@ import com.example.data.model.DetectionMode
 import com.example.data.model.FlagState
 import com.example.data.model.GameMode
 import com.example.data.model.LineOrientation
+import com.example.data.model.PassingDirection
 import com.example.data.model.RoiHeight
 import com.example.data.model.RoiSize
 import com.example.data.model.SessionPhase
@@ -728,7 +729,13 @@ private fun DirectorAntennaCameraPreviewCard(
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Text("${cfg.antennaId.uppercase()} • ${cfg.status}", style = MaterialTheme.typography.titleMedium, color = mx.goldAccent)
+                    Text(
+                        text = "${cfg.antennaId.uppercase()} • ${cfg.activeFps} FPS" +
+                            (if (cfg.lastDetectedDorsal.isNotBlank()) " • #${cfg.lastDetectedDorsal}" else "") +
+                            (if (cfg.lastConfidence > 0f) " (${(cfg.lastConfidence * 100).toInt()}%)" else ""),
+                        style = MaterialTheme.typography.titleMedium,
+                        color = mx.goldAccent
+                    )
                     Text(
                         text = if (selectedOnline) (if (strings.isSpanish) "CONECTADA" else "ONLINE")
                         else (if (strings.isSpanish) "SIN SEÑAL" else "OFFLINE"),
@@ -782,15 +789,54 @@ private fun DirectorAntennaCameraPreviewCard(
                     }
                 }
 
-                Button(
-                    onClick = { viewModel.triggerRemoteCalibration(selectedAntennaId) },
-                    colors = ButtonDefaults.buttonColors(
-                        containerColor = mx.telemetryGreen,
-                        contentColor = contrastTextOn(mx.telemetryGreen)
-                    ),
-                    modifier = Modifier.fillMaxWidth().minimumInteractiveComponentSize().testTag("director_calibrate_antenna_btn")
-                ) {
-                    Text(strings.calibrateEmptyTrack)
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+                    Button(
+                        onClick = { viewModel.triggerRemoteCalibration(selectedAntennaId) },
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = mx.telemetryGreen,
+                            contentColor = contrastTextOn(mx.telemetryGreen)
+                        ),
+                        modifier = Modifier.weight(1f).minimumInteractiveComponentSize().testTag("director_calibrate_antenna_btn")
+                    ) {
+                        Text(strings.calibrateEmptyTrack, maxLines = 1)
+                    }
+                    val auditPhoto = cfg.lastPhotoFinishBase64.ifBlank { cfg.lastSnapshotBase64 }
+                    OutlinedButton(
+                        enabled = auditPhoto.isNotBlank() && !state.aiStewardBusy,
+                        onClick = {
+                            viewModel.inspectPhotoWithAiSteward(
+                                photoBase64 = auditPhoto,
+                                detectedSamples = cfg.lastDetectedLab,
+                                ocrDorsalHint = cfg.lastDetectedDorsal,
+                                autoAssignWarmupSample = true
+                            )
+                        },
+                        modifier = Modifier.minimumInteractiveComponentSize().testTag("director_ai_audit_photo")
+                    ) {
+                        Text(
+                            when {
+                                state.aiStewardBusy -> "IA..."
+                                strings.isSpanish -> "Comisario IA"
+                                else -> "AI Steward"
+                            }
+                        )
+                    }
+                }
+
+                val verdict = state.lastAiVerdict ?: state.roomState.lastAiVerdict
+                if (state.aiStewardError != null) {
+                    Text(
+                        text = state.aiStewardError,
+                        style = MaterialTheme.typography.labelSmall,
+                        color = mx.racingRed
+                    )
+                } else if (verdict != null) {
+                    val vText = if (strings.isSpanish) verdict.reasoningEs else verdict.reasoningEn
+                    Text(
+                        text = "🤖 ${if (verdict.isRealPass) "#${verdict.detectedDorsal.ifBlank { "?" }} (${verdict.confidencePercent}%)" else "Falso paso"} • $vText",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = if (verdict.isRealPass) mx.hotlapPurple else mx.racingRed
+                    )
                 }
             }
         }
@@ -806,6 +852,7 @@ private fun DirectorAntennaMonitorTab(
     selectedAntennaId: String,
     onSelectAntenna: (String) -> Unit
 ) {
+    val mx = LocalMxColors.current
     val cfg = state.antennas[selectedAntennaId]
         ?: AntennaConfig(antennaId = selectedAntennaId, circuitId = state.activeCircuit.id)
 
@@ -849,6 +896,34 @@ private fun DirectorAntennaMonitorTab(
                             selected = cfg.detectionMode == DetectionMode.SINGLE_COLOR,
                             onClick = { viewModel.updateRemoteAntennaConfig(selectedAntennaId, detectionMode = DetectionMode.SINGLE_COLOR) },
                             label = { Text(if (strings.isSpanish) "Solo 1 Color" else "Single Color") }
+                        )
+                    }
+                }
+
+                Text(
+                    if (strings.isSpanish) "Sentido de Paso + Comisario IA Gemini" else "Passing Direction + Gemini AI Steward",
+                    style = MaterialTheme.typography.labelLarge
+                )
+                LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    item {
+                        FilterChip(
+                            selected = cfg.aiStewardEnabled,
+                            onClick = { viewModel.updateRemoteAntennaConfig(selectedAntennaId, aiStewardEnabled = !cfg.aiStewardEnabled) },
+                            label = { Text(if (strings.isSpanish) "Comisario IA ${if (cfg.aiStewardEnabled) "ON" else "OFF"}" else "AI Steward ${if (cfg.aiStewardEnabled) "ON" else "OFF"}") }
+                        )
+                    }
+                    items(PassingDirection.entries) { dir ->
+                        val dirLabel = when (dir) {
+                            PassingDirection.ANY -> if (strings.isSpanish) "Cualquier Sentido" else "Any Dir"
+                            PassingDirection.LEFT_TO_RIGHT -> "Izq → Der"
+                            PassingDirection.RIGHT_TO_LEFT -> "Der → Izq"
+                            PassingDirection.TOP_TO_BOTTOM -> "Arr → Abj"
+                            PassingDirection.BOTTOM_TO_TOP -> "Abj → Arr"
+                        }
+                        FilterChip(
+                            selected = cfg.directionFilter == dir,
+                            onClick = { viewModel.updateRemoteAntennaConfig(selectedAntennaId, directionFilter = dir) },
+                            label = { Text(dirLabel) }
                         )
                     }
                 }

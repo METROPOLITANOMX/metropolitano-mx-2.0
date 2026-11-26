@@ -39,6 +39,7 @@ enum class RoiHeight(val centerYFrac: Float) {
     HIGH(0.32f)
 }
 enum class LineOrientation { VERTICAL, HORIZONTAL }
+enum class PassingDirection { ANY, LEFT_TO_RIGHT, RIGHT_TO_LEFT, TOP_TO_BOTTOM, BOTTOM_TO_TOP }
 enum class AntiVibrationLevel(val minOccupancy: Float, val requiredFrames: Int) {
     HIGH(0.05f, 1),
     MEDIUM(0.11f, 2),
@@ -247,8 +248,23 @@ data class RoomState(
     val smRecordRider: String = "",
     val smRecordMs: Long = 0L,
     val lastPaAnnouncement: PaAnnouncement? = null,
+    val lastAiVerdict: AiStewardVerdict? = null,
     val activeRiders: Map<String, ActiveRoomRider> = emptyMap(),
     val updatedAtMs: Long = 0L
+)
+
+@JsonClass(generateAdapter = true)
+data class AiStewardVerdict(
+    val id: String = "",
+    val matchedRiderId: String = "",
+    val riderName: String = "",
+    val detectedDorsal: String = "",
+    val fairingSummary: String = "",
+    val confidencePercent: Int = 0,
+    val isRealPass: Boolean = true,
+    val reasoningEs: String = "",
+    val reasoningEn: String = "",
+    val timestampMs: Long = 0L
 )
 
 @JsonClass(generateAdapter = true)
@@ -280,12 +296,17 @@ data class AntennaConfig(
     val roiHeight: RoiHeight = RoiHeight.MEDIUM,
     val lineOrientation: LineOrientation = LineOrientation.VERTICAL,
     val linePosition: Float = 0.5f,
+    val directionFilter: PassingDirection = PassingDirection.ANY,
+    val aiStewardEnabled: Boolean = true,
     val antiVibration: AntiVibrationLevel = AntiVibrationLevel.MEDIUM,
     val lastSnapshotBase64: String = "",
     val lastPhotoFinishBase64: String = "",
     val lastDetectedColors: List<String> = emptyList(),
     val lastDetectedHexes: List<String> = emptyList(),
     val lastDetectedLab: List<LabSample> = emptyList(),
+    val lastDetectedDorsal: String = "",
+    val lastConfidence: Float = 0f,
+    val activeFps: Int = 30,
     val lastTriggerTimestampMs: Long = 0L,
     val matchedRiderId: String = "",
     val matchedRiderName: String = "",
@@ -315,7 +336,9 @@ data class CapturedPassSample(
     val timestampMs: Long = 0L,
     val antennaId: String = "antena_1",
     val samples: List<LabSample> = emptyList(),
-    val snapshotBase64: String = ""
+    val snapshotBase64: String = "",
+    val detectedDorsal: String = "",
+    val aiSummary: String = ""
 )
 
 @JsonClass(generateAdapter = true)

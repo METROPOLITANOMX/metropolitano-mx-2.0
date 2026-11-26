@@ -250,7 +250,8 @@ fun DirectorColorWarmupTab(
                                     verticalAlignment = Alignment.CenterVertically
                                 ) {
                                     Text(
-                                        if (strings.isSpanish) "Captura #${idx + 1} (${cap.antennaId})" else "Capture #${idx + 1} (${cap.antennaId})",
+                                        text = (if (strings.isSpanish) "Captura #${idx + 1} (${cap.antennaId})" else "Capture #${idx + 1} (${cap.antennaId})") +
+                                            if (cap.detectedDorsal.isNotBlank()) " • #${cap.detectedDorsal}" else "",
                                         style = MaterialTheme.typography.labelMedium,
                                         color = mx.goldBright
                                     )
@@ -310,6 +311,28 @@ fun DirectorColorWarmupTab(
                                                 maxLines = 1
                                             )
                                         }
+                                    }
+                                }
+                                if (cap.snapshotBase64.isNotBlank()) {
+                                    OutlinedButton(
+                                        enabled = !state.aiStewardBusy,
+                                        onClick = {
+                                            viewModel.inspectPhotoWithAiSteward(
+                                                photoBase64 = cap.snapshotBase64,
+                                                detectedSamples = cap.samples,
+                                                ocrDorsalHint = cap.detectedDorsal,
+                                                autoAssignWarmupSample = true
+                                            )
+                                        },
+                                        modifier = Modifier.fillMaxWidth().minimumInteractiveComponentSize()
+                                    ) {
+                                        Text(
+                                            when {
+                                                state.aiStewardBusy -> if (strings.isSpanish) "Analizando con Comisario IA..." else "AI Steward Analyzing..."
+                                                strings.isSpanish -> "✨ Auto-Identificar Piloto con IA"
+                                                else -> "✨ Auto-Identify Rider with AI"
+                                            }
+                                        )
                                     }
                                 }
                             }

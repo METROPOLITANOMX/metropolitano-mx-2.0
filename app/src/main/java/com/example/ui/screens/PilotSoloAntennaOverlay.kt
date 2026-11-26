@@ -62,6 +62,7 @@ import com.example.data.model.LineOrientation
 import com.example.data.model.RoiHeight
 import com.example.data.model.RoiSize
 import com.example.data.model.formatLapMs
+import com.example.engine.CameraFpsHelper
 import com.example.engine.VisionTimingEngine
 import com.example.i18n.MxStrings
 import com.example.ui.components.GlassRaceCard
@@ -146,12 +147,15 @@ fun PilotSoloAntennaOverlay(
                         try {
                             val cameraProvider = cameraProviderFuture.get()
                             boundProvider = cameraProvider
-                            val preview = Preview.Builder().build().also {
+                            val previewBuilder = Preview.Builder()
+                            CameraFpsHelper.applyBestHighFpsRange(ctx, previewBuilder)
+                            val preview = previewBuilder.build().also {
                                 it.surfaceProvider = previewView.surfaceProvider
                             }
-                            val analysis = ImageAnalysis.Builder()
+                            val analysisBuilder = ImageAnalysis.Builder()
                                 .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
-                                .build()
+                            CameraFpsHelper.applyBestHighFpsRange(ctx, analysisBuilder)
+                            val analysis = analysisBuilder.build()
                             analysis.setAnalyzer(analysisExecutor) { imageProxy ->
                                 try {
                                     val now = viewModel.syncedNowMs()

@@ -263,19 +263,36 @@ fun LiveFanScreen(
 
                     // Live Finish Line Photo-Finish
                     if (photoFinishB64.isNotBlank()) {
+                        val ant1Cfg = state.antennas[AntennaStation.ANTENA_1.id]
+                        val pfVerdict = state.lastAiVerdict ?: state.roomState.lastAiVerdict
                         GlassRaceCard(accentBorder = mx.racingRed.copy(alpha = 0.7f)) {
-                            Column(modifier = Modifier.padding(12.dp)) {
-                                Row(verticalAlignment = Alignment.CenterVertically) {
-                                    PulsingLiveDot()
-                                    Spacer(Modifier.width(8.dp))
-                                    Text("PHOTO-FINISH META", style = MaterialTheme.typography.labelLarge, color = mx.racingRed)
+                            Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Row(verticalAlignment = Alignment.CenterVertically) {
+                                        PulsingLiveDot()
+                                        Spacer(Modifier.width(8.dp))
+                                        Text("PHOTO-FINISH META", style = MaterialTheme.typography.labelLarge, color = mx.racingRed)
+                                    }
+                                    if (!ant1Cfg?.lastDetectedDorsal.isNullOrBlank()) {
+                                        Text("#${ant1Cfg?.lastDetectedDorsal}", style = MaterialTheme.typography.labelLarge, color = mx.goldBright, fontWeight = FontWeight.Bold)
+                                    }
                                 }
-                                Spacer(Modifier.height(8.dp))
                                 Base64ImageView(
                                     base64 = photoFinishB64,
                                     contentDescription = "Photo Finish",
-                                    modifier = Modifier.fillMaxWidth().height(130.dp).clip(RoundedCornerShape(10.dp))
+                                    modifier = Modifier.fillMaxWidth().height(135.dp).clip(RoundedCornerShape(10.dp))
                                 )
+                                if (pfVerdict != null) {
+                                    Text(
+                                        text = "🤖 ${if (strings.isSpanish) pfVerdict.reasoningEs else pfVerdict.reasoningEn}",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = if (pfVerdict.isRealPass) mx.hotlapPurple else mx.racingRed
+                                    )
+                                }
                             }
                         }
                     }

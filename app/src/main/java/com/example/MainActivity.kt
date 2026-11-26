@@ -20,6 +20,7 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
+import com.example.engine.configureAppCheck
 import com.example.i18n.StringsProvider
 import com.example.ui.screens.AntennaScreen
 import com.example.ui.screens.DirectorScreen
@@ -34,6 +35,7 @@ import kotlinx.coroutines.delay
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        configureAppCheck(this, intent)
         enableEdgeToEdge()
         setContent {
             val vm: MxProViewModel = viewModel()

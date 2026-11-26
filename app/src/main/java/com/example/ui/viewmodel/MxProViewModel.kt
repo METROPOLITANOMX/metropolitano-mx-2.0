@@ -6,6 +6,7 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.data.local.UserPreferences
 import com.example.data.model.ActiveRoomRider
+import com.example.data.model.AiStewardVerdict
 import com.example.data.model.AntennaConfig
 import com.example.data.model.AntennaStation
 import com.example.data.model.AntiVibrationLevel
@@ -26,6 +27,7 @@ import com.example.data.model.LayoutType
 import com.example.data.model.LineOrientation
 import com.example.data.model.MXGP_POINTS_TABLE
 import com.example.data.model.PaAnnouncement
+import com.example.data.model.PassingDirection
 import com.example.data.model.RiderAccount
 import com.example.data.model.RiderColorProfile
 import com.example.data.model.RiderStatus
@@ -42,6 +44,7 @@ import com.example.data.model.formatLapForSpeech
 import com.example.data.model.formatLapMs
 import com.example.data.model.sha256
 import com.example.data.repository.MxProRepository
+import com.example.engine.GeminiStewardEngine
 import com.example.engine.LocationGuard
 import com.example.engine.VisionDetectionResult
 import com.example.engine.VoiceAndAudioEngine
@@ -70,6 +73,7 @@ class MxProViewModel(application: Application) : AndroidViewModel(application) {
     private val prefs = UserPreferences(application)
     val voiceEngine = VoiceAndAudioEngine(application)
     private val locationGuard = LocationGuard(application)
+    private val aiSteward = GeminiStewardEngine()
 
     private val _uiState = MutableStateFlow(MxUiState())
     val uiState: StateFlow<MxUiState> = _uiState.asStateFlow()
@@ -780,6 +784,9 @@ class MxProViewModel(application: Application) : AndroidViewModel(application) {
                 put("lastDetectedColors", JSONArray(colorNames))
                 put("lastDetectedHexes", JSONArray(colorHexes))
                 put("lastDetectedLab", labArr)
+                put("lastDetectedDorsal", result.detectedDorsal)
+                put("lastConfidence", result.matchConfidence.toDouble())
+                put("activeFps", result.estimatedFps)
                 put("lastTriggerTimestampMs", result.triggerTimestampMs)
                 put("matchedRiderId", result.matchedProfile?.riderId ?: "")
                 put("matchedRiderName", result.matchedProfile?.riderName ?: "")
@@ -793,35 +800,180 @@ class MxProViewModel(application: Application) : AndroidViewModel(application) {
                     timestampMs = result.triggerTimestampMs,
                     antennaId = station.id,
                     samples = result.detectedColors,
-                    snapshotBase64 = result.photoFinishBase64 ?: result.snapshotBase64
+                    snapshotBase64 = result.photoFinishBase64 ?: result.snapshotBase64,
+                    detectedDorsal = result.detectedDorsal
                 )
                 repo.pushCapturedPass(circuitId, capture)
             }
 
-            val matched = result.matchedProfile
-            if (matched != null) {
-                // Confirm color profile match with green checkmark
-                if (!matched.confirmed) {
-                    repo.saveColorProfile(circuitId, matched.copy(confirmed = true))
+            val activeList = _uiState.value.roomState.activeRiders.values.toList()
+            val antennaCfg = _uiState.value.antennas[station.id]
+            val es = StringsProvider.current(_uiState.value.languageOverride).isSpanish
+
+            // Layer 2: On-Device ML Kit Dorsal OCR tie-breaker
+            val ocrNorm = result.detectedDorsal.trimStart('0').ifBlank { result.detectedDorsal }
+            val ocrMatchedRider = if (ocrNorm.isNotBlank()) {
+                activeList.firstOrNull { r ->
+                    val rd = r.dorsal.trimStart('0').ifBlank { r.dorsal }
+                    rd.equals(ocrNorm, ignoreCase = true)
                 }
-                val existingEntry = _uiState.value.roomState.activeRiders[matched.riderId]
+            } else null
+
+            val colorMatched = result.matchedProfile
+            val resolvedRiderId = when {
+                ocrMatchedRider != null && (colorMatched == null || result.matchConfidence < 0.72f) -> ocrMatchedRider.riderId
+                colorMatched != null && result.matchConfidence >= 0.45f -> colorMatched.riderId
+                antennaCfg?.detectionMode == DetectionMode.ANY_PASS && activeList.size == 1 -> activeList.first().riderId
+                else -> null
+            }
+
+            if (resolvedRiderId != null) {
+                val profileForRider = _uiState.value.colorProfiles.firstOrNull { it.riderId == resolvedRiderId }
+                if (profileForRider != null && !profileForRider.confirmed) {
+                    repo.saveColorProfile(circuitId, profileForRider.copy(confirmed = true))
+                }
+                val existingEntry = _uiState.value.roomState.activeRiders[resolvedRiderId]
                 if (existingEntry != null && !existingEntry.colorConfirmed) {
                     repo.upsertRoomRider(circuitId, existingEntry.copy(colorConfirmed = true))
                 }
-                recordLapForRider(matched.riderId, result.triggerTimestampMs, station.id, colorNames)
+                recordLapForRider(resolvedRiderId, result.triggerTimestampMs, station.id, colorNames)
             } else {
-                // Any Pass mode fallback: attribute to sole active rider or announce pass over PA
-                val activeList = _uiState.value.roomState.activeRiders.values.toList()
-                val antennaCfg = _uiState.value.antennas[station.id]
-                if (antennaCfg?.detectionMode == DetectionMode.ANY_PASS && activeList.size == 1) {
-                    val onlyRider = activeList.first()
-                    recordLapForRider(onlyRider.riderId, result.triggerTimestampMs, station.id, colorNames)
-                } else {
-                    val cTxt = colorNames.joinToString(" ")
-                    val es = StringsProvider.current(_uiState.value.languageOverride).isSpanish
-                    if (_uiState.value.antennaVoiceEnabled && !_uiState.value.paAudioMuted) {
-                        voiceEngine.speak(if (es) "Paso detectado $cTxt" else "Pass detected $cTxt")
+                // Unidentified pass: announce locally first, then run Layer 3 Gemini AI Steward in background!
+                val cTxt = colorNames.joinToString(" ")
+                if (_uiState.value.antennaVoiceEnabled && !_uiState.value.paAudioMuted) {
+                    voiceEngine.speak(if (es) "Paso detectado $cTxt" else "Pass detected $cTxt")
+                }
+                val pfPhoto = result.photoFinishBase64 ?: result.snapshotBase64
+                if (antennaCfg?.aiStewardEnabled != false && pfPhoto.isNotBlank() && activeList.isNotEmpty()) {
+                    resolveDoubtfulPassWithAi(
+                        circuitId = circuitId,
+                        stationId = station.id,
+                        photoBase64 = pfPhoto,
+                        detectedColors = result.detectedColors,
+                        ocrDorsalHint = result.detectedDorsal,
+                        frozenTriggerMs = result.triggerTimestampMs
+                    )
+                }
+            }
+        }
+    }
+
+    private fun resolveDoubtfulPassWithAi(
+        circuitId: String,
+        stationId: String,
+        photoBase64: String,
+        detectedColors: List<LabSample>,
+        ocrDorsalHint: String,
+        frozenTriggerMs: Long
+    ) {
+        viewModelScope.launch {
+            _uiState.update { it.copy(aiStewardBusy = true, aiStewardError = null) }
+            val state = _uiState.value
+            val es = StringsProvider.current(state.languageOverride).isSpanish
+            val res = aiSteward.inspectPassPhoto(
+                photoBase64 = photoBase64,
+                activeRiders = state.roomState.activeRiders.values.toList(),
+                colorProfiles = state.colorProfiles,
+                detectedColorsHint = detectedColors.map { it.colorName },
+                ocrDorsalHint = ocrDorsalHint,
+                nowMs = syncedNowMs()
+            )
+            res.onSuccess { verdict ->
+                _uiState.update { it.copy(aiStewardBusy = false, lastAiVerdict = verdict, aiStewardError = null) }
+                val updatedRoom = _uiState.value.roomState.copy(lastAiVerdict = verdict)
+                repo.saveRoom(updatedRoom)
+                if (verdict.isRealPass && verdict.matchedRiderId.isNotBlank() && verdict.confidencePercent >= 55) {
+                    recordLapForRider(
+                        verdict.matchedRiderId,
+                        frozenTriggerMs,
+                        stationId,
+                        detectedColors.map { it.colorName }
+                    )
+                    // Self-learning: add detected CIE Lab colors to rider profile so future laps resolve in 2ms locally!
+                    if (detectedColors.isNotEmpty()) {
+                        assignWarmupColorSampleToRider(
+                            verdict.matchedRiderId,
+                            verdict.riderName.ifBlank { verdict.matchedRiderId },
+                            detectedColors
+                        )
                     }
+                    _uiState.update {
+                        it.copy(
+                            statusBannerMessage = if (es) "Comisario IA: ${verdict.riderName} (${verdict.confidencePercent}%)"
+                            else "AI Steward: ${verdict.riderName} (${verdict.confidencePercent}%)"
+                        )
+                    }
+                } else if (!verdict.isRealPass) {
+                    _uiState.update {
+                        it.copy(
+                            statusBannerMessage = if (es) "Comisario IA descartó falso paso"
+                            else "AI Steward dismissed false trigger"
+                        )
+                    }
+                }
+            }.onFailure { err ->
+                _uiState.update {
+                    it.copy(
+                        aiStewardBusy = false,
+                        aiStewardError = err.localizedMessage ?: "Error Comisario IA"
+                    )
+                }
+            }
+        }
+    }
+
+    fun inspectPhotoWithAiSteward(
+        photoBase64: String,
+        detectedSamples: List<LabSample> = emptyList(),
+        ocrDorsalHint: String = "",
+        autoAssignWarmupSample: Boolean = true
+    ) {
+        val state = _uiState.value
+        val circuitId = state.activeCircuit.id
+        val es = StringsProvider.current(state.languageOverride).isSpanish
+        if (photoBase64.isBlank()) {
+            _uiState.update {
+                it.copy(
+                    aiStewardError = if (es) "No hay imagen Photo-Finish para analizar."
+                    else "No Photo-Finish image available to inspect."
+                )
+            }
+            return
+        }
+        viewModelScope.launch {
+            _uiState.update { it.copy(aiStewardBusy = true, aiStewardError = null) }
+            val res = aiSteward.inspectPassPhoto(
+                photoBase64 = photoBase64,
+                activeRiders = state.roomState.activeRiders.values.toList(),
+                colorProfiles = state.colorProfiles,
+                detectedColorsHint = detectedSamples.map { it.colorName },
+                ocrDorsalHint = ocrDorsalHint,
+                nowMs = syncedNowMs()
+            )
+            res.onSuccess { verdict ->
+                _uiState.update {
+                    it.copy(
+                        aiStewardBusy = false,
+                        lastAiVerdict = verdict,
+                        aiStewardError = null,
+                        statusBannerMessage = if (es) verdict.reasoningEs else verdict.reasoningEn
+                    )
+                }
+                repo.saveRoom(_uiState.value.roomState.copy(lastAiVerdict = verdict))
+                if (autoAssignWarmupSample && verdict.isRealPass && verdict.matchedRiderId.isNotBlank() && detectedSamples.isNotEmpty()) {
+                    assignWarmupColorSampleToRider(
+                        verdict.matchedRiderId,
+                        verdict.riderName.ifBlank { verdict.matchedRiderId },
+                        detectedSamples
+                    )
+                }
+                syncCircuitData(circuitId)
+            }.onFailure { err ->
+                _uiState.update {
+                    it.copy(
+                        aiStewardBusy = false,
+                        aiStewardError = err.localizedMessage ?: "Error en Comisario IA"
+                    )
                 }
             }
         }
@@ -1394,6 +1546,8 @@ class MxProViewModel(application: Application) : AndroidViewModel(application) {
         roiHeight: RoiHeight? = null,
         lineOrientation: LineOrientation? = null,
         linePosition: Float? = null,
+        directionFilter: PassingDirection? = null,
+        aiStewardEnabled: Boolean? = null,
         antiVibration: AntiVibrationLevel? = null
     ) {
         val circuitId = _uiState.value.activeCircuit.id
@@ -1404,6 +1558,8 @@ class MxProViewModel(application: Application) : AndroidViewModel(application) {
             roiHeight = roiHeight ?: current.roiHeight,
             lineOrientation = lineOrientation ?: current.lineOrientation,
             linePosition = linePosition ?: current.linePosition,
+            directionFilter = directionFilter ?: current.directionFilter,
+            aiStewardEnabled = aiStewardEnabled ?: current.aiStewardEnabled,
             antiVibration = antiVibration ?: current.antiVibration
         )
         // Optimistic local state update so UI sliders & overlays respond immediately
@@ -1419,6 +1575,8 @@ class MxProViewModel(application: Application) : AndroidViewModel(application) {
                 if (roiHeight != null) put("roiHeight", roiHeight.name)
                 if (lineOrientation != null) put("lineOrientation", lineOrientation.name)
                 if (linePosition != null) put("linePosition", linePosition.toDouble())
+                if (directionFilter != null) put("directionFilter", directionFilter.name)
+                if (aiStewardEnabled != null) put("aiStewardEnabled", aiStewardEnabled)
                 if (antiVibration != null) put("antiVibration", antiVibration.name)
             }.toString()
             repo.patchAntennaTelemetry(circuitId, antennaId, patch)

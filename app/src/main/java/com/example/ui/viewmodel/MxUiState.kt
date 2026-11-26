@@ -1,5 +1,6 @@
 package com.example.ui.viewmodel
 
+import com.example.data.model.AiStewardVerdict
 import com.example.data.model.AntennaConfig
 import com.example.data.model.AntennaStation
 import com.example.data.model.AppReport
@@ -55,6 +56,9 @@ data class MxUiState(
     val paAudioMuted: Boolean = false,
     val directorUnlocked: Boolean = false,
     val activeRouletteChallenge: String? = null,
+    val aiStewardBusy: Boolean = false,
+    val aiStewardError: String? = null,
+    val lastAiVerdict: AiStewardVerdict? = null,
     val statusBannerMessage: String? = null,
     val lastBackupJson: String? = null
 ) {

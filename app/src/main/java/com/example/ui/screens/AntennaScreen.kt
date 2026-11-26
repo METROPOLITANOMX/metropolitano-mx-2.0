@@ -64,11 +64,15 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.compose.LocalLifecycleOwner
+import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableIntStateOf
 import com.example.data.model.AntennaConfig
 import com.example.data.model.AntennaStation
 import com.example.data.model.DetectionMode
 import com.example.data.model.LabSample
 import com.example.data.model.LineOrientation
+import com.example.data.model.PassingDirection
+import com.example.engine.CameraFpsHelper
 import com.example.engine.VisionTimingEngine
 import com.example.i18n.MxStrings
 import com.example.ui.components.CarbonStadiumBackdrop
@@ -109,6 +113,9 @@ fun AntennaScreen(
     var lastHandledCalCmd by remember { mutableLongStateOf(0L) }
     val lastSnapshotMonoMs = remember { AtomicLong(0L) }
     var lastDetectedColors by remember { mutableStateOf<List<LabSample>>(emptyList()) }
+    var lastDorsalHint by remember { mutableStateOf("") }
+    var lastFpsEstimate by remember { mutableIntStateOf(30) }
+    var lastMatchConfidence by remember { mutableFloatStateOf(0f) }
     var localCalibrated by remember { mutableStateOf(false) }
     var cameraError by remember { mutableStateOf<String?>(null) }
     var boundProvider by remember { mutableStateOf<ProcessCameraProvider?>(null) }
@@ -221,12 +228,15 @@ fun AntennaScreen(
                         try {
                             val cameraProvider = cameraProviderFuture.get()
                             boundProvider = cameraProvider
-                            val preview = Preview.Builder().build().also {
+                            val previewBuilder = Preview.Builder()
+                            CameraFpsHelper.applyBestHighFpsRange(ctx, previewBuilder)
+                            val preview = previewBuilder.build().also {
                                 it.surfaceProvider = previewView.surfaceProvider
                             }
-                            val analysis = ImageAnalysis.Builder()
+                            val analysisBuilder = ImageAnalysis.Builder()
                                 .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
-                                .build()
+                            CameraFpsHelper.applyBestHighFpsRange(ctx, analysisBuilder)
+                            val analysis = analysisBuilder.build()
                             analysis.setAnalyzer(analysisExecutor) { imageProxy ->
                                 try {
                                     val nowMono = SystemClock.elapsedRealtime()
@@ -240,12 +250,15 @@ fun AntennaScreen(
                                         captureLiveSnapshot = sendSnap
                                     )
                                     if (res != null) {
+                                        lastFpsEstimate = res.estimatedFps
                                         if (sendSnap && res.snapshotBase64.isNotBlank()) {
                                             lastSnapshotMonoMs.set(nowMono)
                                             viewModel.pushAntennaLiveSnapshot(latestStation, res.snapshotBase64)
                                         }
                                         if (res.triggered) {
                                             lastDetectedColors = res.detectedColors
+                                            lastDorsalHint = res.detectedDorsal
+                                            lastMatchConfidence = res.matchConfidence
                                             viewModel.handleVisionDetection(latestStation, res)
                                         }
                                     }
@@ -353,11 +366,14 @@ fun AntennaScreen(
                             if (strings.isSpanish) "Esperando Calibración de Dirección" else "Waiting for Director Calibration"
                         } else {
                             val modeLabel = when (activeConfig.detectionMode) {
-                                DetectionMode.FAIRING_COLOR -> "CIE Lab Color"
-                                DetectionMode.SINGLE_COLOR -> if (strings.isSpanish) "Solo 1 Color" else "Single Color"
-                                DetectionMode.ANY_PASS -> if (strings.isSpanish) "Cualquier Paso" else "Any Pass"
+                                DetectionMode.FAIRING_COLOR -> "CIE Lab"
+                                DetectionMode.SINGLE_COLOR -> if (strings.isSpanish) "1 Color" else "Single Color"
+                                DetectionMode.ANY_PASS -> if (strings.isSpanish) "Cualq. Paso" else "Any Pass"
                             }
-                            "${if (strings.isSpanish) "LISTA" else "READY"} • $modeLabel • ROI ${activeConfig.roiSize.name}"
+                            val dirLabel = if (activeConfig.directionFilter != PassingDirection.ANY) " • ${activeConfig.directionFilter.name.take(5)}" else ""
+                            val aiLabel = if (activeConfig.aiStewardEnabled) " • IA" else ""
+                            val dorsalPart = if (lastDorsalHint.isNotBlank()) " • #$lastDorsalHint" else ""
+                            "${if (strings.isSpanish) "LISTA" else "READY"} • ${lastFpsEstimate}fps • $modeLabel$dirLabel$aiLabel$dorsalPart"
                         },
                         style = MaterialTheme.typography.labelSmall,
                         color = if (localCalibrated) mx.telemetryGreen else mx.racingRed
