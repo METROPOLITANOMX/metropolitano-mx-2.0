@@ -12,8 +12,9 @@ import androidx.camera.core.ExtendableBuilder
 
 object CameraFpsHelper {
     /**
-     * Queries back camera supported AE target FPS ranges and applies the highest smooth range
-     * (preferring [60, 60] or [30, 60] when hardware supports 60fps capture).
+     * Queries back camera supported AE target FPS ranges and applies a safe high-FPS range
+     * that remains compatible with dual-stream Preview + ImageAnalysis (preferring [30, 60]
+     * or [30, 30] rather than fixed [60, 60] which fails on many devices' YUV analyzers).
      */
     @OptIn(ExperimentalCamera2Interop::class)
     fun <T> applyBestHighFpsRange(context: Context, builder: ExtendableBuilder<T>): Int {
@@ -26,8 +27,9 @@ object CameraFpsHelper {
                 if (facing == CameraCharacteristics.LENS_FACING_BACK) {
                     val ranges = chars.get(CameraCharacteristics.CONTROL_AE_AVAILABLE_TARGET_FPS_RANGES) ?: continue
                     bestRange = ranges
-                        .filter { it.upper >= 30 }
-                        .maxWithOrNull(compareBy<Range<Int>> { it.upper }.thenBy { it.lower })
+                        .filter { it.upper >= 30 && it.lower <= 30 }
+                        .maxWithOrNull(compareBy<Range<Int>> { it.upper }.thenByDescending { it.lower })
+                        ?: ranges.firstOrNull { it.upper >= 24 }
                     break
                 }
             }

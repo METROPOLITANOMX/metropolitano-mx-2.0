@@ -57,21 +57,64 @@ class MxProRepository(
 
     suspend fun saveCircuit(circuit: Circuit): Boolean = rtdb.saveCircuit(circuit)
 
-    suspend fun getGlobalConfig(): GlobalConfig = rtdb.fetchGlobalConfig()
-    suspend fun saveGlobalConfig(config: GlobalConfig): Boolean = rtdb.saveGlobalConfig(config)
+    suspend fun getGlobalConfig(): GlobalConfig {
+        val remote = rtdb.fetchGlobalConfig()
+        val cached = loadObjectCache<GlobalConfig>("global_config")
+        if (remote != null && rtdb.isOnline) {
+            val merged = if (cached != null && cached.visitCount > remote.visitCount) {
+                cached.copy(
+                    registrationOpen = remote.registrationOpen,
+                    directorPasswordHash = remote.directorPasswordHash
+                )
+            } else {
+                remote
+            }
+            saveObjectCache("global_config", merged)
+            return merged
+        }
+        return cached ?: GlobalConfig()
+    }
+
+    suspend fun saveGlobalConfig(config: GlobalConfig): Boolean {
+        saveObjectCache("global_config", config)
+        return rtdb.saveGlobalConfig(config)
+    }
+
+    suspend fun getCachedRiders(): List<RiderAccount> = loadListCache("riders")
 
     suspend fun getRiders(): List<RiderAccount> {
         val remote = rtdb.fetchRiders()
+        val cached = loadListCache<RiderAccount>("riders")
         if (rtdb.isOnline) {
-            saveListCache("riders", remote)
-            return remote
+            // Merge any cached accounts that haven't pushed yet if offline created
+            val merged = if (remote.isEmpty() && cached.isNotEmpty()) {
+                cached.also { list -> list.forEach { rtdb.saveRider(it) } }
+            } else {
+                saveListCache("riders", remote)
+                remote
+            }
+            return merged
         }
-        return loadListCache("riders")
+        return cached
     }
 
-    suspend fun getRider(riderId: String): RiderAccount? = rtdb.fetchRider(riderId)
-    suspend fun saveRider(rider: RiderAccount): Boolean = rtdb.saveRider(rider)
-    suspend fun deleteRider(riderId: String): Boolean = rtdb.deleteRider(riderId)
+    suspend fun getRider(riderId: String): RiderAccount? =
+        rtdb.fetchRider(riderId) ?: loadListCache<RiderAccount>("riders").firstOrNull { it.id == riderId }
+
+    suspend fun saveRider(rider: RiderAccount): Boolean {
+        val current = loadListCache<RiderAccount>("riders").toMutableList()
+        current.removeAll { it.id == rider.id }
+        current.add(rider)
+        saveListCache("riders", current)
+        return rtdb.saveRider(rider)
+    }
+
+    suspend fun deleteRider(riderId: String): Boolean {
+        val current = loadListCache<RiderAccount>("riders").toMutableList()
+        current.removeAll { it.id == riderId }
+        saveListCache("riders", current)
+        return rtdb.deleteRider(riderId)
+    }
 
     suspend fun getAllBikes(): List<BikeSetup> {
         val remote = rtdb.fetchAllBikes()
@@ -84,7 +127,6 @@ class MxProRepository(
 
     suspend fun saveBike(bike: BikeSetup): Boolean {
         val ok = rtdb.saveBike(bike)
-        // Always update local cache too
         val current = loadListCache<BikeSetup>("bikes").toMutableList()
         current.removeAll { it.id == bike.id }
         current.add(bike)
@@ -180,6 +222,22 @@ class MxProRepository(
     suspend fun getReports(): List<AppReport> = rtdb.fetchReports()
     suspend fun submitReport(report: AppReport): Boolean = rtdb.submitReport(report)
 
+    private suspend inline fun <reified T> saveObjectCache(key: String, value: T) =
+        withContext(Dispatchers.IO) {
+            val json = rtdb.moshi.adapter(T::class.java).toJson(value)
+            dao.putCache(CachedJsonEntity(key, json, System.currentTimeMillis()))
+        }
+
+    private suspend inline fun <reified T> loadObjectCache(key: String): T? =
+        withContext(Dispatchers.IO) {
+            val cached = dao.getCache(key) ?: return@withContext null
+            try {
+                rtdb.moshi.adapter(T::class.java).lenient().fromJson(cached.jsonPayload)
+            } catch (_: Exception) {
+                null
+            }
+        }
+
     private suspend inline fun <reified T> saveListCache(key: String, list: List<T>) =
         withContext(Dispatchers.IO) {
             val type = Types.newParameterizedType(List::class.java, T::class.java)
@@ -190,7 +248,11 @@ class MxProRepository(
     private suspend inline fun <reified T> loadListCache(key: String): List<T> =
         withContext(Dispatchers.IO) {
             val cached = dao.getCache(key) ?: return@withContext emptyList()
-            val type = Types.newParameterizedType(List::class.java, T::class.java)
-            rtdb.moshi.adapter<List<T>>(type).fromJson(cached.jsonPayload) ?: emptyList()
+            try {
+                val type = Types.newParameterizedType(List::class.java, T::class.java)
+                rtdb.moshi.adapter<List<T>>(type).fromJson(cached.jsonPayload) ?: emptyList()
+            } catch (_: Exception) {
+                emptyList()
+            }
         }
 }

@@ -1,6 +1,7 @@
 package com.example.ui.screens
 
 import androidx.compose.foundation.Image
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -11,18 +12,25 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.CompareArrows
+import androidx.compose.material.icons.filled.Star
 import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.Button
 import androidx.compose.material3.Checkbox
+import androidx.compose.material3.CheckboxDefaults
 import androidx.compose.material3.FilterChip
+import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.ScrollableTabRow
 import androidx.compose.material3.Tab
 import androidx.compose.material3.TabRow
 import androidx.compose.material3.Text
@@ -36,35 +44,30 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
-import androidx.compose.foundation.background
-import androidx.compose.foundation.border
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.CompareArrows
-import androidx.compose.material.icons.filled.Star
-import androidx.compose.material3.ButtonDefaults
-import androidx.compose.material3.Icon
-import androidx.compose.material3.OutlinedButton
-import androidx.compose.material3.ScrollableTabRow
-import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.text.font.FontWeight
 import com.example.R
 import com.example.data.model.BikeSetup
 import com.example.data.model.LayoutType
+import com.example.data.model.RiderStatus
 import com.example.data.model.SurfaceType
 import com.example.data.model.formatLapMs
 import com.example.i18n.MxStrings
 import com.example.ui.components.Base64ImageView
 import com.example.ui.components.GlassRaceCard
+import com.example.ui.components.Mx3dButton
 import com.example.ui.components.RiderDorsalBadge
 import com.example.ui.components.SurfaceBadge
 import com.example.ui.theme.LocalMxColors
 import com.example.ui.theme.contrastTextOn
+import com.example.ui.theme.mxChipColors
+import com.example.ui.theme.mxTextFieldColors
 import com.example.ui.viewmodel.MxProViewModel
 import com.example.ui.viewmodel.MxUiState
 
@@ -76,28 +79,77 @@ fun PilotAuthDialog(
     onDismiss: () -> Unit,
     onAuthenticated: () -> Unit
 ) {
+    val mx = LocalMxColors.current
     var tabIndex by remember { mutableIntStateOf(0) }
     var name by remember { mutableStateOf(state.rememberedName) }
     var pass by remember { mutableStateOf(state.rememberedPass) }
     var pin4 by remember { mutableStateOf("") }
-    var rememberMe by remember { mutableStateOf(state.rememberMe) }
+    var rememberMe by remember { mutableStateOf(true) }
+    val activeRidersList = state.riders.filter { it.status == RiderStatus.ACTIVE }
 
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text(strings.iamPilot) },
+        containerColor = MaterialTheme.colorScheme.surface,
+        titleContentColor = MaterialTheme.colorScheme.onSurface,
+        textContentColor = MaterialTheme.colorScheme.onSurface,
+        title = { Text(strings.iamPilot, style = MaterialTheme.typography.titleLarge) },
         text = {
             Column(modifier = Modifier.verticalScroll(rememberScrollState())) {
-                TabRow(selectedTabIndex = tabIndex) {
-                    Tab(selected = tabIndex == 0, onClick = { tabIndex = 0 }, text = { Text(strings.pilotSignIn) })
-                    Tab(selected = tabIndex == 1, onClick = { tabIndex = 1 }, text = { Text(strings.pilotRegister) })
-                    Tab(selected = tabIndex == 2, onClick = { tabIndex = 2 }, text = { Text(strings.recoverPin) })
+                TabRow(
+                    selectedTabIndex = tabIndex,
+                    containerColor = MaterialTheme.colorScheme.surfaceVariant,
+                    contentColor = mx.goldAccent
+                ) {
+                    Tab(
+                        selected = tabIndex == 0,
+                        onClick = { tabIndex = 0 },
+                        selectedContentColor = mx.goldAccent,
+                        unselectedContentColor = mx.subtleText,
+                        text = { Text(strings.pilotSignIn) }
+                    )
+                    Tab(
+                        selected = tabIndex == 1,
+                        onClick = { tabIndex = 1 },
+                        selectedContentColor = mx.goldAccent,
+                        unselectedContentColor = mx.subtleText,
+                        text = { Text(strings.pilotRegister) }
+                    )
+                    Tab(
+                        selected = tabIndex == 2,
+                        onClick = { tabIndex = 2 },
+                        selectedContentColor = mx.goldAccent,
+                        unselectedContentColor = mx.subtleText,
+                        text = { Text(strings.recoverPin) }
+                    )
                 }
-                Spacer(Modifier.height(12.dp))
+                Spacer(Modifier.height(10.dp))
+
+                if (tabIndex == 0 && activeRidersList.isNotEmpty()) {
+                    Text(
+                        if (strings.isSpanish) "¿Ya tienes cuenta? Toca tu piloto:" else "Existing account? Tap your name:",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = mx.goldAccent
+                    )
+                    Spacer(Modifier.height(4.dp))
+                    LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        items(activeRidersList.take(12)) { r ->
+                            FilterChip(
+                                selected = name.equals(r.name, ignoreCase = true),
+                                onClick = { name = r.name },
+                                label = { Text(r.name) },
+                                colors = mxChipColors()
+                            )
+                        }
+                    }
+                    Spacer(Modifier.height(8.dp))
+                }
+
                 OutlinedTextField(
                     value = name,
                     onValueChange = { name = it },
                     label = { Text(strings.pilotName) },
                     singleLine = true,
+                    colors = mxTextFieldColors(),
                     modifier = Modifier.fillMaxWidth().testTag("auth_name_input")
                 )
                 Spacer(Modifier.height(8.dp))
@@ -108,6 +160,7 @@ fun PilotAuthDialog(
                         label = { Text(strings.password) },
                         singleLine = true,
                         visualTransformation = PasswordVisualTransformation(),
+                        colors = mxTextFieldColors(),
                         modifier = Modifier.fillMaxWidth().testTag("auth_pass_input")
                     )
                 }
@@ -119,6 +172,7 @@ fun PilotAuthDialog(
                         label = { Text(strings.pin4Digits) },
                         singleLine = true,
                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                        colors = mxTextFieldColors(),
                         modifier = Modifier.fillMaxWidth().testTag("auth_pin_input")
                     )
                 }
@@ -130,26 +184,35 @@ fun PilotAuthDialog(
                         label = { Text(strings.newPassword) },
                         singleLine = true,
                         visualTransformation = PasswordVisualTransformation(),
+                        colors = mxTextFieldColors(),
                         modifier = Modifier.fillMaxWidth()
                     )
                 }
                 if (tabIndex != 2) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
-                        Checkbox(checked = rememberMe, onCheckedChange = { rememberMe = it })
-                        Text(strings.rememberMe)
+                        Checkbox(
+                            checked = rememberMe,
+                            onCheckedChange = { rememberMe = it },
+                            colors = CheckboxDefaults.colors(
+                                checkedColor = mx.goldAccent,
+                                checkmarkColor = contrastTextOn(mx.goldAccent),
+                                uncheckedColor = mx.subtleText
+                            )
+                        )
+                        Text(strings.rememberMe, color = MaterialTheme.colorScheme.onSurface)
                     }
                 }
                 if (tabIndex == 1 && !state.globalConfig.registrationOpen) {
                     Text(
                         text = strings.registrationsClosed,
-                        color = LocalMxColors.current.racingRed,
+                        color = mx.racingRed,
                         style = MaterialTheme.typography.bodyMedium
                     )
                 }
             }
         },
         confirmButton = {
-            Button(
+            Mx3dButton(
                 onClick = {
                     when (tabIndex) {
                         0 -> viewModel.signInRider(name, pass, rememberMe, onAuthenticated)
@@ -157,6 +220,8 @@ fun PilotAuthDialog(
                         else -> viewModel.recoverPasswordWithPin(name, pin4, pass)
                     }
                 },
+                containerColor = mx.goldAccent,
+                contentColor = contrastTextOn(mx.goldAccent),
                 modifier = Modifier.testTag("auth_submit_button")
             ) {
                 Text(
@@ -169,7 +234,9 @@ fun PilotAuthDialog(
             }
         },
         dismissButton = {
-            TextButton(onClick = onDismiss) { Text(if (strings.isSpanish) "Cancelar" else "Cancel") }
+            TextButton(onClick = onDismiss) {
+                Text(if (strings.isSpanish) "Cancelar" else "Cancel", color = mx.subtleText)
+            }
         }
     )
 }
@@ -180,12 +247,16 @@ fun DirectorUnlockDialog(
     onDismiss: () -> Unit,
     onAttemptUnlock: (String) -> Boolean
 ) {
+    val mx = LocalMxColors.current
     var pwd by remember { mutableStateOf("") }
     var wrong by remember { mutableStateOf(false) }
 
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text(strings.directorConsole) },
+        containerColor = MaterialTheme.colorScheme.surface,
+        titleContentColor = MaterialTheme.colorScheme.onSurface,
+        textContentColor = MaterialTheme.colorScheme.onSurface,
+        title = { Text(strings.directorConsole, style = MaterialTheme.typography.titleLarge) },
         text = {
             Column {
                 Text(
@@ -194,7 +265,8 @@ fun DirectorUnlockDialog(
                     } else {
                         "Organizer protected access (default key: MXPRO2026)."
                     },
-                    style = MaterialTheme.typography.bodyMedium
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = mx.subtleText
                 )
                 Spacer(Modifier.height(10.dp))
                 OutlinedTextField(
@@ -204,17 +276,20 @@ fun DirectorUnlockDialog(
                     visualTransformation = PasswordVisualTransformation(),
                     isError = wrong,
                     singleLine = true,
+                    colors = mxTextFieldColors(),
                     modifier = Modifier.fillMaxWidth().testTag("director_pwd_input")
                 )
             }
         },
         confirmButton = {
-            Button(
+            Mx3dButton(
                 onClick = { if (!onAttemptUnlock(pwd)) wrong = true },
+                containerColor = mx.goldAccent,
+                contentColor = contrastTextOn(mx.goldAccent),
                 modifier = Modifier.testTag("director_unlock_button")
             ) { Text(if (strings.isSpanish) "Entrar" else "Unlock") }
         },
-        dismissButton = { TextButton(onClick = onDismiss) { Text(if (strings.isSpanish) "Cerrar" else "Close") } }
+        dismissButton = { TextButton(onClick = onDismiss) { Text(if (strings.isSpanish) "Cerrar" else "Close", color = mx.subtleText) } }
     )
 }
 
@@ -224,6 +299,7 @@ fun CreateCircuitDialog(
     onDismiss: () -> Unit,
     onSave: (String, String, SurfaceType, Int, LayoutType) -> Unit
 ) {
+    val mx = LocalMxColors.current
     var name by remember { mutableStateOf("") }
     var city by remember { mutableStateOf("") }
     var surface by remember { mutableStateOf(SurfaceType.MX) }
@@ -232,35 +308,55 @@ fun CreateCircuitDialog(
 
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text(strings.createLocalCircuit) },
+        containerColor = MaterialTheme.colorScheme.surface,
+        titleContentColor = MaterialTheme.colorScheme.onSurface,
+        textContentColor = MaterialTheme.colorScheme.onSurface,
+        title = { Text(strings.createLocalCircuit, style = MaterialTheme.typography.titleLarge) },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                OutlinedTextField(value = name, onValueChange = { name = it }, label = { Text(strings.circuitName) }, singleLine = true)
-                OutlinedTextField(value = city, onValueChange = { city = it }, label = { Text(strings.countryCity) }, singleLine = true)
+                OutlinedTextField(
+                    value = name,
+                    onValueChange = { name = it },
+                    label = { Text(strings.circuitName) },
+                    singleLine = true,
+                    colors = mxTextFieldColors()
+                )
+                OutlinedTextField(
+                    value = city,
+                    onValueChange = { city = it },
+                    label = { Text(strings.countryCity) },
+                    singleLine = true,
+                    colors = mxTextFieldColors()
+                )
                 OutlinedTextField(
                     value = lengthStr,
                     onValueChange = { lengthStr = it.filter(Char::isDigit) },
                     label = { Text(strings.lengthMeters) },
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                    singleLine = true
+                    singleLine = true,
+                    colors = mxTextFieldColors()
                 )
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    FilterChip(selected = surface == SurfaceType.MX, onClick = { surface = SurfaceType.MX }, label = { Text("MX Tierra") })
-                    FilterChip(selected = surface == SurfaceType.SM, onClick = { surface = SurfaceType.SM }, label = { Text("SM Asfalto") })
+                    FilterChip(selected = surface == SurfaceType.MX, onClick = { surface = SurfaceType.MX }, label = { Text("MX Tierra") }, colors = mxChipColors())
+                    FilterChip(selected = surface == SurfaceType.SM, onClick = { surface = SurfaceType.SM }, label = { Text("SM Asfalto") }, colors = mxChipColors())
                 }
                 Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                     LayoutType.entries.forEach { lt ->
-                        FilterChip(selected = layout == lt, onClick = { layout = lt }, label = { Text(lt.name) })
+                        FilterChip(selected = layout == lt, onClick = { layout = lt }, label = { Text(lt.name) }, colors = mxChipColors())
                     }
                 }
             }
         },
         confirmButton = {
-            Button(onClick = { onSave(name, city, surface, lengthStr.toIntOrNull() ?: 180, layout) }) {
+            Mx3dButton(
+                onClick = { onSave(name, city, surface, lengthStr.toIntOrNull() ?: 180, layout) },
+                containerColor = mx.goldAccent,
+                contentColor = contrastTextOn(mx.goldAccent)
+            ) {
                 Text(strings.saveCircuit)
             }
         },
-        dismissButton = { TextButton(onClick = onDismiss) { Text(if (strings.isSpanish) "Cancelar" else "Cancel") } }
+        dismissButton = { TextButton(onClick = onDismiss) { Text(if (strings.isSpanish) "Cancelar" else "Cancel", color = mx.subtleText) } }
     )
 }
 
@@ -279,21 +375,29 @@ fun WorldRankingPaddockDialog(
 
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text(strings.worldRankingPaddock) },
+        containerColor = MaterialTheme.colorScheme.surface,
+        titleContentColor = MaterialTheme.colorScheme.onSurface,
+        textContentColor = MaterialTheme.colorScheme.onSurface,
+        title = { Text(strings.worldRankingPaddock, style = MaterialTheme.typography.titleLarge) },
         text = {
             Column(modifier = Modifier.fillMaxWidth().heightIn(max = 500.dp)) {
-                ScrollableTabRow(selectedTabIndex = tab, edgePadding = 4.dp) {
-                    Tab(selected = tab == 0, onClick = { tab = 0 }, text = { Text("Ranking") })
-                    Tab(selected = tab == 1, onClick = { tab = 1 }, text = { Text("Paddock") })
-                    Tab(selected = tab == 2, onClick = { tab = 2 }, text = { Text(if (strings.isSpanish) "Retos MX/SM" else "Challenges") })
-                    Tab(selected = tab == 3, onClick = { tab = 3 }, text = { Text(if (strings.isSpanish) "Copas" else "Champs") })
+                ScrollableTabRow(
+                    selectedTabIndex = tab,
+                    edgePadding = 4.dp,
+                    containerColor = MaterialTheme.colorScheme.surfaceVariant,
+                    contentColor = mx.goldAccent
+                ) {
+                    Tab(selected = tab == 0, onClick = { tab = 0 }, selectedContentColor = mx.goldAccent, unselectedContentColor = mx.subtleText, text = { Text("Ranking") })
+                    Tab(selected = tab == 1, onClick = { tab = 1 }, selectedContentColor = mx.goldAccent, unselectedContentColor = mx.subtleText, text = { Text("Paddock") })
+                    Tab(selected = tab == 2, onClick = { tab = 2 }, selectedContentColor = mx.goldAccent, unselectedContentColor = mx.subtleText, text = { Text(if (strings.isSpanish) "Retos MX/SM" else "Challenges") })
+                    Tab(selected = tab == 3, onClick = { tab = 3 }, selectedContentColor = mx.goldAccent, unselectedContentColor = mx.subtleText, text = { Text(if (strings.isSpanish) "Copas" else "Champs") })
                 }
                 Spacer(Modifier.height(8.dp))
                 if (tab == 0 || tab == 1) {
                     Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                        FilterChip(selected = surfaceFilter == null, onClick = { surfaceFilter = null }, label = { Text(if (strings.isSpanish) "Todas" else "All") })
-                        FilterChip(selected = surfaceFilter == SurfaceType.MX, onClick = { surfaceFilter = SurfaceType.MX }, label = { Text("MX Tierra") })
-                        FilterChip(selected = surfaceFilter == SurfaceType.SM, onClick = { surfaceFilter = SurfaceType.SM }, label = { Text("SM Supermotard") })
+                        FilterChip(selected = surfaceFilter == null, onClick = { surfaceFilter = null }, label = { Text(if (strings.isSpanish) "Todas" else "All") }, colors = mxChipColors())
+                        FilterChip(selected = surfaceFilter == SurfaceType.MX, onClick = { surfaceFilter = SurfaceType.MX }, label = { Text("MX Tierra") }, colors = mxChipColors())
+                        FilterChip(selected = surfaceFilter == SurfaceType.SM, onClick = { surfaceFilter = SurfaceType.SM }, label = { Text("SM Supermotard") }, colors = mxChipColors())
                     }
                     Spacer(Modifier.height(8.dp))
                 }
@@ -408,7 +512,7 @@ fun WorldRankingPaddockDialog(
                                                     Spacer(Modifier.width(4.dp))
                                                     Text("${b.setupVotes} ${if (strings.isSpanish) "Votos" else "Votes"}")
                                                 }
-                                                Button(
+                                                Mx3dButton(
                                                     onClick = {
                                                         when {
                                                             compareA == null -> compareA = b
@@ -416,10 +520,8 @@ fun WorldRankingPaddockDialog(
                                                             else -> compareB = b
                                                         }
                                                     },
-                                                    colors = ButtonDefaults.buttonColors(
-                                                        containerColor = if (compareA?.id == b.id || compareB?.id == b.id) mx.telemetryGreen else mx.smBadge,
-                                                        contentColor = contrastTextOn(if (compareA?.id == b.id || compareB?.id == b.id) mx.telemetryGreen else mx.smBadge)
-                                                    ),
+                                                    containerColor = if (compareA?.id == b.id || compareB?.id == b.id) mx.telemetryGreen else mx.smBadge,
+                                                    contentColor = contrastTextOn(if (compareA?.id == b.id || compareB?.id == b.id) mx.telemetryGreen else mx.smBadge),
                                                     modifier = Modifier.weight(1f)
                                                 ) {
                                                     Icon(Icons.Default.CompareArrows, contentDescription = null)
@@ -587,9 +689,13 @@ private fun SetupComparatorCard(
 
 @Composable
 fun AppGuideDialog(strings: MxStrings, onDismiss: () -> Unit) {
+    val mx = LocalMxColors.current
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text(strings.guideAndInstall) },
+        containerColor = MaterialTheme.colorScheme.surface,
+        titleContentColor = MaterialTheme.colorScheme.onSurface,
+        textContentColor = MaterialTheme.colorScheme.onSurface,
+        title = { Text(strings.guideAndInstall, style = MaterialTheme.typography.titleLarge) },
         text = {
             Text(
                 text = if (strings.isSpanish) {
@@ -602,10 +708,11 @@ fun AppGuideDialog(strings: MxStrings, onDismiss: () -> Unit) {
                         "2. In Race Director (default key: MXPRO2026), calibrate empty track and align the ROI Tunnel.\n" +
                         "3. During Warm-Up assign CIE Lab fairing colors in 2-3 passes.\n" +
                         "4. Riders race with Radio Mount or Pocket Mode while fans/pit-crew use Live Fan & Pit-Board."
-                }
+                },
+                style = MaterialTheme.typography.bodyMedium
             )
         },
-        confirmButton = { TextButton(onClick = onDismiss) { Text("OK") } }
+        confirmButton = { TextButton(onClick = onDismiss) { Text("OK", color = mx.goldAccent) } }
     )
 }
 
@@ -616,33 +723,48 @@ fun ReportInboxDialog(
     onDismiss: () -> Unit,
     onSubmit: (String, String, String) -> Unit
 ) {
+    val mx = LocalMxColors.current
     var sender by remember { mutableStateOf(state.currentRider?.name ?: "") }
     var type by remember { mutableStateOf("BUG") }
     var msg by remember { mutableStateOf("") }
 
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text(strings.reportInbox) },
+        containerColor = MaterialTheme.colorScheme.surface,
+        titleContentColor = MaterialTheme.colorScheme.onSurface,
+        textContentColor = MaterialTheme.colorScheme.onSurface,
+        title = { Text(strings.reportInbox, style = MaterialTheme.typography.titleLarge) },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                OutlinedTextField(value = sender, onValueChange = { sender = it }, label = { Text(strings.pilotName) }, singleLine = true)
+                OutlinedTextField(
+                    value = sender,
+                    onValueChange = { sender = it },
+                    label = { Text(strings.pilotName) },
+                    singleLine = true,
+                    colors = mxTextFieldColors()
+                )
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    FilterChip(selected = type == "BUG", onClick = { type = "BUG" }, label = { Text("Bug") })
-                    FilterChip(selected = type == "SUGGESTION", onClick = { type = "SUGGESTION" }, label = { Text(if (strings.isSpanish) "Sugerencia" else "Suggestion") })
+                    FilterChip(selected = type == "BUG", onClick = { type = "BUG" }, label = { Text("Bug") }, colors = mxChipColors())
+                    FilterChip(selected = type == "SUGGESTION", onClick = { type = "SUGGESTION" }, label = { Text(if (strings.isSpanish) "Sugerencia" else "Suggestion") }, colors = mxChipColors())
                 }
                 OutlinedTextField(
                     value = msg,
                     onValueChange = { msg = it },
                     label = { Text(if (strings.isSpanish) "Descripción" else "Details") },
-                    minLines = 3
+                    minLines = 3,
+                    colors = mxTextFieldColors()
                 )
             }
         },
         confirmButton = {
-            Button(onClick = { onSubmit(sender, type, msg) }) {
+            Mx3dButton(
+                onClick = { onSubmit(sender, type, msg) },
+                containerColor = mx.goldAccent,
+                contentColor = contrastTextOn(mx.goldAccent)
+            ) {
                 Text(if (strings.isSpanish) "Enviar" else "Send")
             }
         },
-        dismissButton = { TextButton(onClick = onDismiss) { Text(if (strings.isSpanish) "Cancelar" else "Cancel") } }
+        dismissButton = { TextButton(onClick = onDismiss) { Text(if (strings.isSpanish) "Cancelar" else "Cancel", color = mx.subtleText) } }
     )
 }

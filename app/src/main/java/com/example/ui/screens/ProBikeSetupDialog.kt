@@ -10,13 +10,12 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.Button
-import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Slider
+import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.Tab
 import androidx.compose.material3.TabRow
 import androidx.compose.material3.Text
@@ -33,8 +32,11 @@ import androidx.compose.ui.unit.dp
 import com.example.data.model.BikeSetup
 import com.example.data.model.SurfaceType
 import com.example.i18n.MxStrings
+import com.example.ui.components.Mx3dButton
 import com.example.ui.theme.LocalMxColors
 import com.example.ui.theme.contrastTextOn
+import com.example.ui.theme.mxChipColors
+import com.example.ui.theme.mxTextFieldColors
 import java.util.Locale
 
 @Composable
@@ -110,6 +112,9 @@ fun ProBikeSetupDialog(
 
     AlertDialog(
         onDismissRequest = onDismiss,
+        containerColor = MaterialTheme.colorScheme.surface,
+        titleContentColor = MaterialTheme.colorScheme.onSurface,
+        textContentColor = MaterialTheme.colorScheme.onSurface,
         title = {
             Text(
                 if (strings.isSpanish) "Ficha Pro Losi Promoto" else "Losi Promoto Pro Setup",
@@ -137,6 +142,7 @@ fun ProBikeSetupDialog(
                             if (model.contains("-SM")) model = "Losi Promoto-MX"
                         },
                         label = { Text("MX Tierra") },
+                        colors = mxChipColors(),
                         modifier = Modifier.weight(1f)
                     )
                     FilterChip(
@@ -146,6 +152,7 @@ fun ProBikeSetupDialog(
                             if (model.contains("-MX")) model = "Losi Promoto-SM"
                         },
                         label = { Text("SM Supermotard") },
+                        colors = mxChipColors(),
                         modifier = Modifier.weight(1f)
                     )
                 }
@@ -166,6 +173,7 @@ fun ProBikeSetupDialog(
                         onValueChange = { model = it },
                         label = { Text(if (strings.isSpanish) "Modelo" else "Model") },
                         singleLine = true,
+                        colors = mxTextFieldColors(),
                         modifier = Modifier.weight(1.7f)
                     )
                     OutlinedTextField(
@@ -173,6 +181,7 @@ fun ProBikeSetupDialog(
                         onValueChange = { dorsal = it.take(4) },
                         label = { Text("Dorsal") },
                         singleLine = true,
+                        colors = mxTextFieldColors(),
                         modifier = Modifier.weight(0.9f)
                     )
                 }
@@ -181,28 +190,44 @@ fun ProBikeSetupDialog(
                     onValueChange = { terrain = it },
                     label = { Text(if (strings.isSpanish) "Superficie / Pista" else "Track Surface") },
                     singleLine = true,
+                    colors = mxTextFieldColors(),
                     modifier = Modifier.fillMaxWidth()
                 )
 
                 Spacer(Modifier.height(2.dp))
-                TabRow(selectedTabIndex = sectionTab) {
+                TabRow(
+                    selectedTabIndex = sectionTab,
+                    containerColor = MaterialTheme.colorScheme.surfaceVariant,
+                    contentColor = mx.goldAccent
+                ) {
                     Tab(
                         selected = sectionTab == 0,
                         onClick = { sectionTab = 0 },
+                        selectedContentColor = mx.goldAccent,
+                        unselectedContentColor = mx.subtleText,
                         text = { Text(if (strings.isSpanish) "Suspensión" else "Suspension", maxLines = 1) }
                     )
                     Tab(
                         selected = sectionTab == 1,
                         onClick = { sectionTab = 1 },
+                        selectedContentColor = mx.goldAccent,
+                        unselectedContentColor = mx.subtleText,
                         text = { Text("Spektrum", maxLines = 1) }
                     )
                     Tab(
                         selected = sectionTab == 2,
                         onClick = { sectionTab = 2 },
+                        selectedContentColor = mx.goldAccent,
+                        unselectedContentColor = mx.subtleText,
                         text = { Text(if (strings.isSpanish) "Desarrollo" else "Gearing", maxLines = 1) }
                     )
                 }
 
+                val sliderColors = SliderDefaults.colors(
+                    thumbColor = mx.goldAccent,
+                    activeTrackColor = mx.goldAccent,
+                    inactiveTrackColor = mx.glassBorder
+                )
                 when (sectionTab) {
                     0 -> {
                         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -211,6 +236,7 @@ fun ProBikeSetupDialog(
                                 onValueChange = { forkOil = it },
                                 label = { Text(if (strings.isSpanish) "Aceite Horquilla" else "Fork Oil") },
                                 singleLine = true,
+                                colors = mxTextFieldColors(),
                                 modifier = Modifier.weight(1f)
                             )
                             OutlinedTextField(
@@ -218,6 +244,7 @@ fun ProBikeSetupDialog(
                                 onValueChange = { forkSpring = it },
                                 label = { Text(if (strings.isSpanish) "Muelle Del." else "Fork Spring") },
                                 singleLine = true,
+                                colors = mxTextFieldColors(),
                                 modifier = Modifier.weight(1f)
                             )
                         }
@@ -227,6 +254,7 @@ fun ProBikeSetupDialog(
                                 onValueChange = { shockOil = it },
                                 label = { Text(if (strings.isSpanish) "Aceite Amort." else "Shock Oil") },
                                 singleLine = true,
+                                colors = mxTextFieldColors(),
                                 modifier = Modifier.weight(1f)
                             )
                             OutlinedTextField(
@@ -234,6 +262,7 @@ fun ProBikeSetupDialog(
                                 onValueChange = { shockSpring = it },
                                 label = { Text(if (strings.isSpanish) "Muelle Tras." else "Shock Spring") },
                                 singleLine = true,
+                                colors = mxTextFieldColors(),
                                 modifier = Modifier.weight(1f)
                             )
                         }
@@ -243,6 +272,7 @@ fun ProBikeSetupDialog(
                                 onValueChange = { rearSagMm = it },
                                 label = { Text("SAG Trasero") },
                                 singleLine = true,
+                                colors = mxTextFieldColors(),
                                 modifier = Modifier.weight(1f)
                             )
                             OutlinedTextField(
@@ -250,6 +280,7 @@ fun ProBikeSetupDialog(
                                 onValueChange = { servoSaverSetting = it },
                                 label = { Text("Servo Saver") },
                                 singleLine = true,
+                                colors = mxTextFieldColors(),
                                 modifier = Modifier.weight(1f)
                             )
                         }
@@ -259,7 +290,8 @@ fun ProBikeSetupDialog(
                                 FilterChip(
                                     selected = leanBarSetting.startsWith(opt.substringBefore(" ")),
                                     onClick = { leanBarSetting = opt },
-                                    label = { Text(opt) }
+                                    label = { Text(opt) },
+                                    colors = mxChipColors()
                                 )
                             }
                         }
@@ -267,7 +299,8 @@ fun ProBikeSetupDialog(
                         Slider(
                             value = frontBrakePercent.toFloat(),
                             onValueChange = { frontBrakePercent = it.toInt() },
-                            valueRange = 0f..100f
+                            valueRange = 0f..100f,
+                            colors = sliderColors
                         )
                     }
                     1 -> {
@@ -275,7 +308,8 @@ fun ProBikeSetupDialog(
                         Slider(
                             value = gyroPercent.toFloat(),
                             onValueChange = { gyroPercent = it.toInt() },
-                            valueRange = 0f..100f
+                            valueRange = 0f..100f,
+                            colors = sliderColors
                         )
                         Text(if (strings.isSpanish) "Modo MS6X" else "MS6X Mode", style = MaterialTheme.typography.labelSmall, color = mx.subtleText)
                         Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -283,7 +317,8 @@ fun ProBikeSetupDialog(
                                 FilterChip(
                                     selected = gyroMode == m,
                                     onClick = { gyroMode = m },
-                                    label = { Text(m) }
+                                    label = { Text(m) },
+                                    colors = mxChipColors()
                                 )
                             }
                         }
@@ -292,25 +327,27 @@ fun ProBikeSetupDialog(
                             value = escPunch.toFloat(),
                             onValueChange = { escPunch = it.toInt().coerceIn(1, 9) },
                             valueRange = 1f..9f,
-                            steps = 7
+                            steps = 7,
+                            colors = sliderColors
                         )
                         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                             Column(modifier = Modifier.weight(1f)) {
                                 Text("Drag Brake: $escDragBrake%", style = MaterialTheme.typography.labelSmall)
-                                Slider(value = escDragBrake.toFloat(), onValueChange = { escDragBrake = it.toInt() }, valueRange = 0f..50f)
+                                Slider(value = escDragBrake.toFloat(), onValueChange = { escDragBrake = it.toInt() }, valueRange = 0f..50f, colors = sliderColors)
                             }
                             Column(modifier = Modifier.weight(1f)) {
                                 Text("Max Brake: $escMaxBrake%", style = MaterialTheme.typography.labelSmall)
-                                Slider(value = escMaxBrake.toFloat(), onValueChange = { escMaxBrake = it.toInt() }, valueRange = 25f..100f)
+                                Slider(value = escMaxBrake.toFloat(), onValueChange = { escMaxBrake = it.toInt() }, valueRange = 25f..100f, colors = sliderColors)
                             }
                         }
                         Text("Expo Gas: ${if (throttleExpo >= 0) "+$throttleExpo" else "$throttleExpo"}%", style = MaterialTheme.typography.labelSmall)
-                        Slider(value = throttleExpo.toFloat(), onValueChange = { throttleExpo = it.toInt() }, valueRange = -30f..30f)
+                        Slider(value = throttleExpo.toFloat(), onValueChange = { throttleExpo = it.toInt() }, valueRange = -30f..30f, colors = sliderColors)
                         OutlinedTextField(
                             value = lipoCutoff,
                             onValueChange = { lipoCutoff = it },
                             label = { Text("LiPo Cutoff") },
                             singleLine = true,
+                            colors = mxTextFieldColors(),
                             modifier = Modifier.fillMaxWidth()
                         )
                     }
@@ -324,13 +361,13 @@ fun ProBikeSetupDialog(
                         Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
                             Text("Piñón:", style = MaterialTheme.typography.labelSmall)
                             listOf(13, 14, 15, 16, 17).forEach { p ->
-                                FilterChip(selected = pinionTeeth == p, onClick = { pinionTeeth = p }, label = { Text("${p}T") })
+                                FilterChip(selected = pinionTeeth == p, onClick = { pinionTeeth = p }, label = { Text("${p}T") }, colors = mxChipColors())
                             }
                         }
                         Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
                             Text("Corona:", style = MaterialTheme.typography.labelSmall)
                             listOf(48, 50, 52, 54).forEach { s ->
-                                FilterChip(selected = spurTeeth == s, onClick = { spurTeeth = s }, label = { Text("${s}T") })
+                                FilterChip(selected = spurTeeth == s, onClick = { spurTeeth = s }, label = { Text("${s}T") }, colors = mxChipColors())
                             }
                         }
                         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -339,6 +376,7 @@ fun ProBikeSetupDialog(
                                 onValueChange = { frontTire = it },
                                 label = { Text(if (strings.isSpanish) "Neumático Del." else "Front Tire") },
                                 singleLine = true,
+                                colors = mxTextFieldColors(),
                                 modifier = Modifier.weight(1f)
                             )
                             OutlinedTextField(
@@ -346,6 +384,7 @@ fun ProBikeSetupDialog(
                                 onValueChange = { rearTire = it },
                                 label = { Text(if (strings.isSpanish) "Neumático Tras." else "Rear Tire") },
                                 singleLine = true,
+                                colors = mxTextFieldColors(),
                                 modifier = Modifier.weight(1f)
                             )
                         }
@@ -354,6 +393,7 @@ fun ProBikeSetupDialog(
                             onValueChange = { tireInsert = it },
                             label = { Text(if (strings.isSpanish) "Espuma / Inserto" else "Tire Insert") },
                             singleLine = true,
+                            colors = mxTextFieldColors(),
                             modifier = Modifier.fillMaxWidth()
                         )
                         OutlinedTextField(
@@ -361,6 +401,7 @@ fun ProBikeSetupDialog(
                             onValueChange = { lipoSpecs = it },
                             label = { Text(if (strings.isSpanish) "Batería LiPo (2S IC5)" else "LiPo Battery Pack") },
                             singleLine = true,
+                            colors = mxTextFieldColors(),
                             modifier = Modifier.fillMaxWidth()
                         )
                         OutlinedTextField(
@@ -368,6 +409,7 @@ fun ProBikeSetupDialog(
                             onValueChange = { notes = it },
                             label = { Text(if (strings.isSpanish) "Notas de reglaje" else "Setup Notes") },
                             minLines = 2,
+                            colors = mxTextFieldColors(),
                             modifier = Modifier.fillMaxWidth()
                         )
                     }
@@ -375,7 +417,7 @@ fun ProBikeSetupDialog(
             }
         },
         confirmButton = {
-            Button(
+            Mx3dButton(
                 onClick = {
                     val ratio = String.format(Locale.US, "%.2f:1", spurTeeth.toDouble() / pinionTeeth.coerceAtLeast(1))
                     onSave(
@@ -411,14 +453,12 @@ fun ProBikeSetupDialog(
                         )
                     )
                 },
-                colors = ButtonDefaults.buttonColors(
-                    containerColor = mx.goldAccent,
-                    contentColor = contrastTextOn(mx.goldAccent)
-                )
+                containerColor = mx.goldAccent,
+                contentColor = contrastTextOn(mx.goldAccent)
             ) { Text(if (strings.isSpanish) "Guardar Setup Pro" else "Save Pro Setup") }
         },
         dismissButton = {
-            TextButton(onClick = onDismiss) { Text(if (strings.isSpanish) "Cancelar" else "Cancel") }
+            TextButton(onClick = onDismiss) { Text(if (strings.isSpanish) "Cancelar" else "Cancel", color = mx.subtleText) }
         }
     )
 }

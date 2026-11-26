@@ -1,20 +1,35 @@
 package com.example.ui.components
 
+import android.content.Context
 import android.graphics.BitmapFactory
+import android.os.Build
+import android.os.VibrationEffect
+import android.os.Vibrator
+import android.os.VibratorManager
 import android.util.Base64
 import androidx.compose.animation.animateColor
 import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.Spring
+import androidx.compose.animation.core.animateDpAsState
+import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
@@ -32,23 +47,213 @@ import androidx.compose.material.icons.filled.Wifi
 import androidx.compose.material.icons.filled.WifiOff
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.minimumInteractiveComponentSize
+import androidx.compose.material3.ripple
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.graphics.lerp
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.example.data.model.SurfaceType
 import com.example.ui.theme.LocalMxColors
+import com.example.ui.theme.contrastTextOn
+
+fun triggerRacingClickVibration(context: Context) {
+    try {
+        val vibrator: Vibrator? = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            (context.getSystemService(Context.VIBRATOR_MANAGER_SERVICE) as? VibratorManager)?.defaultVibrator
+        } else {
+            @Suppress("DEPRECATION")
+            context.getSystemService(Context.VIBRATOR_SERVICE) as? Vibrator
+        }
+        if (vibrator?.hasVibrator() == true) {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                vibrator.vibrate(VibrationEffect.createOneShot(22L, VibrationEffect.DEFAULT_AMPLITUDE))
+            } else {
+                @Suppress("DEPRECATION")
+                vibrator.vibrate(22L)
+            }
+        }
+    } catch (_: Exception) {
+    }
+}
+
+/**
+ * 3D Glossy Metallic Racing Button with bottom bevel extrusion, animated shine sweep,
+ * spring depression physics, and crisp tactile vibration feedback.
+ */
+@Composable
+fun Mx3dButton(
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+    containerColor: Color = LocalMxColors.current.goldAccent,
+    contentColor: Color = contrastTextOn(containerColor),
+    enabled: Boolean = true,
+    shimmer: Boolean = true,
+    contentPadding: PaddingValues = PaddingValues(horizontal = 16.dp, vertical = 12.dp),
+    content: @Composable RowScope.() -> Unit
+) {
+    val context = LocalContext.current
+    val haptic = LocalHapticFeedback.current
+    val interactionSource = remember { MutableInteractionSource() }
+    val isPressed by interactionSource.collectIsPressedAsState()
+
+    val pressOffset by animateDpAsState(
+        targetValue = if (isPressed && enabled) 4.dp else 0.dp,
+        animationSpec = spring(stiffness = Spring.StiffnessHigh),
+        label = "btn_press_offset"
+    )
+    val scale by animateFloatAsState(
+        targetValue = if (isPressed && enabled) 0.985f else 1f,
+        animationSpec = spring(dampingRatio = Spring.DampingRatioMediumBouncy),
+        label = "btn_scale"
+    )
+
+    val effectiveBase = if (enabled) containerColor else containerColor.copy(alpha = 0.42f)
+    val effectiveText = if (enabled) contentColor else contentColor.copy(alpha = 0.65f)
+    val topGloss = lerp(effectiveBase, Color.White, 0.34f)
+    val bottomShade = lerp(effectiveBase, Color.Black, 0.24f)
+    val bevelColor = lerp(effectiveBase, Color.Black, 0.54f)
+    val shape = RoundedCornerShape(14.dp)
+
+    Box(
+        modifier = modifier
+            .minimumInteractiveComponentSize()
+            .graphicsLayer {
+                scaleX = scale
+                scaleY = scale
+            }
+            .padding(bottom = 5.dp)
+    ) {
+        // 3D Bottom Bevel / Extruded Lip
+        Box(
+            modifier = Modifier
+                .matchParentSize()
+                .offset(y = 5.dp)
+                .clip(shape)
+                .background(bevelColor)
+        )
+        // Raised Glossy Metallic Cap
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .offset(y = pressOffset)
+                .clip(shape)
+                .background(
+                    Brush.verticalGradient(
+                        colors = listOf(topGloss, effectiveBase, bottomShade)
+                    )
+                )
+                .metallicShimmerSweep(enabled = shimmer && enabled)
+                .border(1.dp, Color.White.copy(alpha = if (enabled) 0.42f else 0.14f), shape)
+                .clickable(
+                    interactionSource = interactionSource,
+                    indication = ripple(color = Color.White),
+                    enabled = enabled,
+                    role = Role.Button
+                ) {
+                    haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                    triggerRacingClickVibration(context)
+                    onClick()
+                }
+                .padding(contentPadding),
+            horizontalArrangement = Arrangement.Center,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            CompositionLocalProvider(LocalContentColor provides effectiveText) {
+                content()
+            }
+        }
+    }
+}
+
+/**
+ * 3D Dark Carbon / Metallic Outlined Racing Button with glossy top rim highlight and haptic tap.
+ */
+@Composable
+fun Mx3dOutlinedButton(
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+    borderColor: Color = LocalMxColors.current.goldAccent,
+    contentColor: Color = MaterialTheme.colorScheme.onSurface,
+    enabled: Boolean = true,
+    contentPadding: PaddingValues = PaddingValues(horizontal = 14.dp, vertical = 10.dp),
+    content: @Composable RowScope.() -> Unit
+) {
+    val mx = LocalMxColors.current
+    val context = LocalContext.current
+    val haptic = LocalHapticFeedback.current
+    val interactionSource = remember { MutableInteractionSource() }
+    val isPressed by interactionSource.collectIsPressedAsState()
+
+    val pressOffset by animateDpAsState(
+        targetValue = if (isPressed && enabled) 3.dp else 0.dp,
+        animationSpec = spring(stiffness = Spring.StiffnessHigh),
+        label = "obtn_press_offset"
+    )
+    val shape = RoundedCornerShape(14.dp)
+    val topFace = if (mx.isSunMode) Color(0xFFFFFFFF) else Color(0xFF232C3E)
+    val bottomFace = if (mx.isSunMode) Color(0xFFE2E8F0) else Color(0xFF141925)
+    val bevelFace = if (mx.isSunMode) Color(0xFF94A3B8) else Color(0xFF070A10)
+
+    Box(
+        modifier = modifier
+            .minimumInteractiveComponentSize()
+            .padding(bottom = 4.dp)
+    ) {
+        Box(
+            modifier = Modifier
+                .matchParentSize()
+                .offset(y = 4.dp)
+                .clip(shape)
+                .background(bevelFace)
+        )
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .offset(y = pressOffset)
+                .clip(shape)
+                .background(Brush.verticalGradient(listOf(topFace, bottomFace)))
+                .border(1.3.dp, borderColor.copy(alpha = if (enabled) 0.78f else 0.30f), shape)
+                .clickable(
+                    interactionSource = interactionSource,
+                    indication = ripple(color = borderColor),
+                    enabled = enabled,
+                    role = Role.Button
+                ) {
+                    haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                    triggerRacingClickVibration(context)
+                    onClick()
+                }
+                .padding(contentPadding),
+            horizontalArrangement = Arrangement.Center,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            val effective = if (enabled) contentColor else contentColor.copy(alpha = 0.45f)
+            CompositionLocalProvider(LocalContentColor provides effective) {
+                content()
+            }
+        }
+    }
+}
 
 @Composable
 fun MxTopHeader(
@@ -63,6 +268,7 @@ fun MxTopHeader(
     onTogglePaMute: (() -> Unit)? = null
 ) {
     val mx = LocalMxColors.current
+    val context = LocalContext.current
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -74,7 +280,10 @@ fun MxTopHeader(
         Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.weight(1f)) {
             if (onBack != null) {
                 IconButton(
-                    onClick = onBack,
+                    onClick = {
+                        triggerRacingClickVibration(context)
+                        onBack()
+                    },
                     modifier = Modifier
                         .minimumInteractiveComponentSize()
                         .testTag("nav_back_button")
@@ -114,7 +323,10 @@ fun MxTopHeader(
             Spacer(modifier = Modifier.width(4.dp))
             if (paMuted != null && onTogglePaMute != null) {
                 IconButton(
-                    onClick = onTogglePaMute,
+                    onClick = {
+                        triggerRacingClickVibration(context)
+                        onTogglePaMute()
+                    },
                     modifier = Modifier
                         .minimumInteractiveComponentSize()
                         .testTag("toggle_pa_audio_button")
@@ -127,7 +339,10 @@ fun MxTopHeader(
                 }
             }
             IconButton(
-                onClick = onToggleLang,
+                onClick = {
+                    triggerRacingClickVibration(context)
+                    onToggleLang()
+                },
                 modifier = Modifier
                     .minimumInteractiveComponentSize()
                     .testTag("toggle_lang_button")
@@ -139,7 +354,10 @@ fun MxTopHeader(
                 )
             }
             IconButton(
-                onClick = onToggleSunMode,
+                onClick = {
+                    triggerRacingClickVibration(context)
+                    onToggleSunMode()
+                },
                 modifier = Modifier
                     .minimumInteractiveComponentSize()
                     .testTag("toggle_sun_mode_button")

@@ -1,9 +1,14 @@
 package com.example.ui.theme
 
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.FilterChipDefaults
 import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextFieldDefaults
+import androidx.compose.material3.SelectableChipColors
 import androidx.compose.material3.Shapes
+import androidx.compose.material3.SwitchDefaults
+import androidx.compose.material3.TextFieldColors
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
@@ -15,7 +20,7 @@ import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.unit.dp
 
 fun contrastTextOn(background: Color): Color =
-    if (background.luminance() > 0.45f) Color(0xFF0A0C10) else Color.White
+    if (background.luminance() > 0.44f) Color(0xFF07090E) else Color.White
 
 @Immutable
 data class MxExtendedColors(
@@ -35,7 +40,7 @@ data class MxExtendedColors(
 val LocalMxColors = staticCompositionLocalOf {
     MxExtendedColors(
         isSunMode = false,
-        glassCardBg = CarbonSurface.copy(alpha = 0.84f),
+        glassCardBg = CarbonSurface.copy(alpha = 0.90f),
         glassBorder = GlassBorderDark,
         goldAccent = ChampionshipGold,
         goldBright = ChampionshipGoldBright,
@@ -51,12 +56,12 @@ val LocalMxColors = staticCompositionLocalOf {
 private val CarbonNightColorScheme = darkColorScheme(
     primary = ChampionshipGold,
     onPrimary = CarbonVoid,
-    primaryContainer = Color(0xFF33260B),
+    primaryContainer = Color(0xFF3A2B09),
     onPrimaryContainer = ChampionshipGoldBright,
     secondary = NitroCyan,
     onSecondary = CarbonVoid,
-    secondaryContainer = Color(0xFF0A2A33),
-    onSecondaryContainer = NitroCyan,
+    secondaryContainer = Color(0xFF0B323D),
+    onSecondaryContainer = TextPrimaryDark,
     tertiary = RacingCrimson,
     onTertiary = Color.White,
     background = CarbonVoid,
@@ -65,7 +70,13 @@ private val CarbonNightColorScheme = darkColorScheme(
     onSurface = TextPrimaryDark,
     surfaceVariant = CarbonElevated,
     onSurfaceVariant = TextSecondaryDark,
+    surfaceContainerLowest = CarbonVoid,
+    surfaceContainerLow = Color(0xFF0E131D),
+    surfaceContainer = CarbonSurface,
+    surfaceContainerHigh = CarbonElevated,
+    surfaceContainerHighest = CarbonElevatedHigh,
     outline = GlassBorderDark,
+    outlineVariant = GlassBorderDark,
     error = RacingCrimson,
     onError = Color.White
 )
@@ -87,7 +98,13 @@ private val SunHighContrastColorScheme = lightColorScheme(
     onSurface = TextPrimarySun,
     surfaceVariant = SunElevated,
     onSurfaceVariant = TextSecondarySun,
+    surfaceContainerLowest = SunSurface,
+    surfaceContainerLow = SunCanvas,
+    surfaceContainer = SunSurface,
+    surfaceContainerHigh = SunElevated,
+    surfaceContainerHighest = SunElevatedHigh,
     outline = SunBorder,
+    outlineVariant = Color(0xFF94A3B8),
     error = SunCrimson,
     onError = Color.White
 )
@@ -96,6 +113,45 @@ private val MxShapes = Shapes(
     small = RoundedCornerShape(10.dp),
     medium = RoundedCornerShape(16.dp),
     large = RoundedCornerShape(22.dp)
+)
+
+@Composable
+fun mxChipColors(): SelectableChipColors {
+    val mx = LocalMxColors.current
+    return FilterChipDefaults.filterChipColors(
+        containerColor = if (mx.isSunMode) SunElevated else CarbonElevated,
+        labelColor = MaterialTheme.colorScheme.onSurface,
+        iconColor = mx.goldAccent,
+        selectedContainerColor = mx.goldAccent,
+        selectedLabelColor = contrastTextOn(mx.goldAccent),
+        selectedLeadingIconColor = contrastTextOn(mx.goldAccent)
+    )
+}
+
+@Composable
+fun mxTextFieldColors(): TextFieldColors {
+    val mx = LocalMxColors.current
+    return OutlinedTextFieldDefaults.colors(
+        focusedTextColor = MaterialTheme.colorScheme.onSurface,
+        unfocusedTextColor = MaterialTheme.colorScheme.onSurface,
+        disabledTextColor = mx.subtleText,
+        focusedBorderColor = mx.goldAccent,
+        unfocusedBorderColor = mx.glassBorder,
+        focusedLabelColor = mx.goldAccent,
+        unfocusedLabelColor = mx.subtleText,
+        cursorColor = mx.goldAccent,
+        focusedContainerColor = if (mx.isSunMode) SunSurface else CarbonVoid.copy(alpha = 0.55f),
+        unfocusedContainerColor = if (mx.isSunMode) SunSurface else CarbonVoid.copy(alpha = 0.35f)
+    )
+}
+
+@Composable
+fun mxSwitchColors() = SwitchDefaults.colors(
+    checkedThumbColor = contrastTextOn(LocalMxColors.current.telemetryGreen),
+    checkedTrackColor = LocalMxColors.current.telemetryGreen,
+    uncheckedThumbColor = MaterialTheme.colorScheme.onSurface,
+    uncheckedTrackColor = MaterialTheme.colorScheme.surfaceVariant,
+    uncheckedBorderColor = LocalMxColors.current.glassBorder
 )
 
 @Composable
@@ -121,7 +177,7 @@ fun MetropolitanoMxTheme(
     } else {
         MxExtendedColors(
             isSunMode = false,
-            glassCardBg = CarbonSurface.copy(alpha = 0.88f),
+            glassCardBg = CarbonSurface.copy(alpha = 0.92f),
             glassBorder = GlassBorderDark,
             goldAccent = ChampionshipGold,
             goldBright = ChampionshipGoldBright,

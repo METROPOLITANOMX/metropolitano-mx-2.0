@@ -25,13 +25,10 @@ import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.Button
-import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -55,8 +52,12 @@ import com.example.data.model.RiderStatus
 import com.example.data.model.SessionPhase
 import com.example.i18n.MxStrings
 import com.example.ui.components.GlassRaceCard
+import com.example.ui.components.Mx3dButton
+import com.example.ui.components.Mx3dOutlinedButton
 import com.example.ui.theme.LocalMxColors
 import com.example.ui.theme.contrastTextOn
+import com.example.ui.theme.mxChipColors
+import com.example.ui.theme.mxSwitchColors
 import com.example.ui.viewmodel.MxProViewModel
 import com.example.ui.viewmodel.MxUiState
 
@@ -107,23 +108,22 @@ fun DirectorColorWarmupTab(
                 }
 
                 if (isWarmup) {
-                    Button(
+                    Mx3dButton(
                         onClick = { viewModel.stopSession() },
-                        colors = ButtonDefaults.buttonColors(containerColor = mx.racingRed, contentColor = Color.White),
-                        modifier = Modifier.fillMaxWidth().minimumInteractiveComponentSize()
+                        containerColor = mx.racingRed,
+                        contentColor = Color.White,
+                        modifier = Modifier.fillMaxWidth()
                     ) {
                         Icon(Icons.Default.Stop, contentDescription = null)
                         Spacer(Modifier.width(6.dp))
                         Text(if (strings.isSpanish) "STOP WARM-UP (Pilotos a Parrilla)" else "STOP WARM-UP (Riders to Grid)")
                     }
                 } else {
-                    Button(
+                    Mx3dButton(
                         onClick = { viewModel.startWarmup(friendly = false) },
-                        colors = ButtonDefaults.buttonColors(
-                            containerColor = mx.goldAccent,
-                            contentColor = contrastTextOn(mx.goldAccent)
-                        ),
-                        modifier = Modifier.fillMaxWidth().minimumInteractiveComponentSize()
+                        containerColor = mx.goldAccent,
+                        contentColor = contrastTextOn(mx.goldAccent),
+                        modifier = Modifier.fillMaxWidth()
                     ) {
                         Icon(Icons.Default.PlayArrow, contentDescription = null)
                         Spacer(Modifier.width(6.dp))
@@ -133,7 +133,8 @@ fun DirectorColorWarmupTab(
 
                 Text(
                     if (strings.isSpanish) "Modo de Captura de Color (Antena 1)" else "Color Capture Mode (Antenna 1)",
-                    style = MaterialTheme.typography.labelLarge
+                    style = MaterialTheme.typography.labelLarge,
+                    color = MaterialTheme.colorScheme.onSurface
                 )
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     FilterChip(
@@ -144,7 +145,8 @@ fun DirectorColorWarmupTab(
                                 detectionMode = DetectionMode.FAIRING_COLOR
                             )
                         },
-                        label = { Text(if (strings.isSpanish) "Multi-Captura" else "Multi-Color") }
+                        label = { Text(if (strings.isSpanish) "Multi-Captura" else "Multi-Color") },
+                        colors = mxChipColors()
                     )
                     FilterChip(
                         selected = isSingleColorMode,
@@ -154,7 +156,8 @@ fun DirectorColorWarmupTab(
                                 detectionMode = DetectionMode.SINGLE_COLOR
                             )
                         },
-                        label = { Text(if (strings.isSpanish) "Solo 1 Color" else "Single Color") }
+                        label = { Text(if (strings.isSpanish) "Solo 1 Color" else "Single Color") },
+                        colors = mxChipColors()
                     )
                 }
             }
@@ -167,7 +170,8 @@ fun DirectorColorWarmupTab(
                     FilterChip(
                         selected = r.riderId == selectedRiderId,
                         onClick = { selectedRiderId = r.riderId },
-                        label = { Text("${r.riderName} #${r.dorsal}") }
+                        label = { Text("${r.riderName} #${r.dorsal}") },
+                        colors = mxChipColors()
                     )
                 }
             }
@@ -218,20 +222,18 @@ fun DirectorColorWarmupTab(
                             }
                         }
                         if (ridersInRoom.isNotEmpty()) {
-                            Button(
+                            Mx3dButton(
                                 onClick = {
-                                    val r = ridersInRoom.firstOrNull { it.riderId == selectedRiderId } ?: return@Button
+                                    val r = ridersInRoom.firstOrNull { it.riderId == selectedRiderId } ?: return@Mx3dButton
                                     if (isSingleColorMode) {
                                         viewModel.assignSingleColorToRider(r.riderId, r.riderName, latestSamples.first())
                                     } else {
                                         viewModel.assignWarmupColorSampleToRider(r.riderId, r.riderName, latestSamples)
                                     }
                                 },
-                                colors = ButtonDefaults.buttonColors(
-                                    containerColor = mx.goldAccent,
-                                    contentColor = contrastTextOn(mx.goldAccent)
-                                ),
-                                modifier = Modifier.fillMaxWidth().minimumInteractiveComponentSize().testTag("director_assign_color_btn")
+                                containerColor = mx.goldAccent,
+                                contentColor = contrastTextOn(mx.goldAccent),
+                                modifier = Modifier.fillMaxWidth().testTag("director_assign_color_btn")
                             ) {
                                 Text(
                                     if (isSingleColorMode) (if (strings.isSpanish) "Fijar 1 Color Único" else "Lock Single Color")
@@ -282,28 +284,27 @@ fun DirectorColorWarmupTab(
                                 if (ridersInRoom.isNotEmpty()) {
                                     Row(horizontalArrangement = Arrangement.spacedBy(6.dp), modifier = Modifier.fillMaxWidth()) {
                                         if (!isSingleColorMode) {
-                                            Button(
+                                            Mx3dButton(
                                                 onClick = {
-                                                    val r = ridersInRoom.firstOrNull { it.riderId == selectedRiderId } ?: return@Button
+                                                    val r = ridersInRoom.firstOrNull { it.riderId == selectedRiderId } ?: return@Mx3dButton
                                                     viewModel.assignWarmupColorSampleToRider(r.riderId, r.riderName, cap.samples)
                                                 },
-                                                colors = ButtonDefaults.buttonColors(
-                                                    containerColor = mx.goldAccent,
-                                                    contentColor = contrastTextOn(mx.goldAccent)
-                                                ),
-                                                modifier = Modifier.weight(1f).minimumInteractiveComponentSize()
+                                                containerColor = mx.goldAccent,
+                                                contentColor = contrastTextOn(mx.goldAccent),
+                                                modifier = Modifier.weight(1f)
                                             ) {
                                                 Text("${strings.addColorSample} (#${idx + 1})", maxLines = 1)
                                             }
                                         }
-                                        OutlinedButton(
+                                        Mx3dOutlinedButton(
                                             onClick = {
-                                                val r = ridersInRoom.firstOrNull { it.riderId == selectedRiderId } ?: return@OutlinedButton
+                                                val r = ridersInRoom.firstOrNull { it.riderId == selectedRiderId } ?: return@Mx3dOutlinedButton
                                                 cap.samples.firstOrNull()?.let { firstColor ->
                                                     viewModel.assignSingleColorToRider(r.riderId, r.riderName, firstColor)
                                                 }
                                             },
-                                            modifier = Modifier.weight(1f).minimumInteractiveComponentSize()
+                                            borderColor = mx.smBadge,
+                                            modifier = Modifier.weight(1f)
                                         ) {
                                             Text(
                                                 if (strings.isSpanish) "Solo 1 Color (${cap.samples.firstOrNull()?.colorName ?: ""})"
@@ -314,7 +315,7 @@ fun DirectorColorWarmupTab(
                                     }
                                 }
                                 if (cap.snapshotBase64.isNotBlank()) {
-                                    OutlinedButton(
+                                    Mx3dOutlinedButton(
                                         enabled = !state.aiStewardBusy,
                                         onClick = {
                                             viewModel.inspectPhotoWithAiSteward(
@@ -324,7 +325,8 @@ fun DirectorColorWarmupTab(
                                                 autoAssignWarmupSample = true
                                             )
                                         },
-                                        modifier = Modifier.fillMaxWidth().minimumInteractiveComponentSize()
+                                        borderColor = mx.hotlapPurple,
+                                        modifier = Modifier.fillMaxWidth()
                                     ) {
                                         Text(
                                             when {
@@ -342,7 +344,11 @@ fun DirectorColorWarmupTab(
             }
         }
 
-        Text(if (strings.isSpanish) "3. Perfiles CIE Lab Guardados por Piloto" else "3. Saved CIE Lab Profiles by Rider", style = MaterialTheme.typography.titleLarge)
+        Text(
+            if (strings.isSpanish) "3. Perfiles CIE Lab Guardados por Piloto" else "3. Saved CIE Lab Profiles by Rider",
+            style = MaterialTheme.typography.titleLarge,
+            color = MaterialTheme.colorScheme.onBackground
+        )
         ridersInRoom.forEach { r ->
             val profile = state.colorProfiles.firstOrNull { it.riderId == r.riderId }
             val confirmed = profile?.confirmed == true || r.colorConfirmed
@@ -354,7 +360,7 @@ fun DirectorColorWarmupTab(
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Column {
-                            Text("${r.riderName} (#${r.dorsal})", style = MaterialTheme.typography.titleMedium)
+                            Text("${r.riderName} (#${r.dorsal})", style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.onSurface)
                             Text(
                                 "${profile?.samples?.size ?: 0} / 12 muestras CIE Lab",
                                 style = MaterialTheme.typography.labelSmall,
@@ -419,7 +425,8 @@ fun DirectorClubAdminTab(
                 Column(modifier = Modifier.weight(1f)) {
                     Text(
                         if (strings.isSpanish) "Permitir Nuevos Registros" else "Allow New Registrations",
-                        style = MaterialTheme.typography.titleMedium
+                        style = MaterialTheme.typography.titleMedium,
+                        color = MaterialTheme.colorScheme.onSurface
                     )
                     Text(
                         if (state.globalConfig.registrationOpen) (if (strings.isSpanish) "Abierto" else "Open")
@@ -430,28 +437,62 @@ fun DirectorClubAdminTab(
                 }
                 Switch(
                     checked = state.globalConfig.registrationOpen,
-                    onCheckedChange = { viewModel.toggleGlobalRegistrationOpen() }
+                    onCheckedChange = { viewModel.toggleGlobalRegistrationOpen() },
+                    colors = mxSwitchColors()
                 )
             }
         }
 
         GlassRaceCard {
-            Column(modifier = Modifier.padding(14.dp)) {
-                Text(
-                    "${if (strings.isSpanish) "Visitas totales" else "Total visits"}: ${state.globalConfig.visitCount}",
-                    style = MaterialTheme.typography.titleMedium,
-                    color = mx.goldAccent
-                )
-                state.globalConfig.lastVisits.take(5).forEach { v ->
-                    Text("• $v", style = MaterialTheme.typography.labelSmall, color = mx.subtleText)
+            Column(modifier = Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        "${if (strings.isSpanish) "Visitas totales" else "Total visits"}: ${state.globalConfig.visitCount}",
+                        style = MaterialTheme.typography.titleMedium,
+                        color = mx.goldAccent
+                    )
+                    Mx3dOutlinedButton(
+                        onClick = { viewModel.refreshDirectorDashboard() },
+                        borderColor = mx.smBadge,
+                        modifier = Modifier.width(120.dp)
+                    ) {
+                        Text(if (strings.isSpanish) "Actualizar" else "Refresh", maxLines = 1)
+                    }
+                }
+                if (state.globalConfig.lastVisits.isEmpty()) {
+                    Text(
+                        if (strings.isSpanish) "Sin historial reciente" else "No recent visits yet",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = mx.subtleText
+                    )
+                } else {
+                    state.globalConfig.lastVisits.take(5).forEach { v ->
+                        Text("• $v", style = MaterialTheme.typography.labelSmall, color = mx.subtleText)
+                    }
                 }
             }
         }
 
         Text(
             if (strings.isSpanish) "Cuentas de Pilotos (${state.riders.size})" else "Rider Accounts (${state.riders.size})",
-            style = MaterialTheme.typography.titleLarge
+            style = MaterialTheme.typography.titleLarge,
+            color = MaterialTheme.colorScheme.onBackground
         )
+        if (state.riders.isEmpty()) {
+            GlassRaceCard {
+                Text(
+                    if (strings.isSpanish) "Aún no hay cuentas de piloto registradas en la base de datos."
+                    else "No rider accounts registered yet.",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = mx.subtleText,
+                    modifier = Modifier.padding(14.dp)
+                )
+            }
+        }
         state.riders.forEach { rider ->
             val isBlocked = rider.status == RiderStatus.BLOCKED
             GlassRaceCard(
@@ -463,7 +504,7 @@ fun DirectorClubAdminTab(
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Column(modifier = Modifier.weight(1f)) {
-                        Text(rider.name, style = MaterialTheme.typography.titleMedium)
+                        Text(rider.name, style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.onSurface)
                         Text(
                             text = "${if (isBlocked) (if (strings.isSpanish) "BLOQUEADA" else "BLOCKED") else (if (strings.isSpanish) "ACTIVA" else "ACTIVE")} • ${rider.totalLaps} laps",
                             style = MaterialTheme.typography.labelSmall,
@@ -471,15 +512,17 @@ fun DirectorClubAdminTab(
                         )
                     }
                     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                        OutlinedButton(
+                        Mx3dOutlinedButton(
                             onClick = { viewModel.toggleRiderStatus(rider) },
-                            modifier = Modifier.minimumInteractiveComponentSize().testTag("admin_block_${rider.id}")
+                            borderColor = if (isBlocked) mx.telemetryGreen else mx.goldAccent,
+                            modifier = Modifier.width(118.dp).testTag("admin_block_${rider.id}")
                         ) {
                             Icon(Icons.Default.Block, contentDescription = null, modifier = Modifier.size(16.dp), tint = if (isBlocked) mx.telemetryGreen else mx.goldAccent)
                             Spacer(Modifier.width(4.dp))
                             Text(
                                 if (isBlocked) (if (strings.isSpanish) "Activar" else "Unblock")
-                                else (if (strings.isSpanish) "Bloquear" else "Block")
+                                else (if (strings.isSpanish) "Bloquear" else "Block"),
+                                maxLines = 1
                             )
                         }
                         IconButton(
@@ -493,12 +536,16 @@ fun DirectorClubAdminTab(
             }
         }
 
-        Text(if (strings.isSpanish) "Buzón de Reportes (${state.reports.size})" else "Report Inbox (${state.reports.size})", style = MaterialTheme.typography.titleLarge)
+        Text(
+            if (strings.isSpanish) "Buzón de Reportes (${state.reports.size})" else "Report Inbox (${state.reports.size})",
+            style = MaterialTheme.typography.titleLarge,
+            color = MaterialTheme.colorScheme.onBackground
+        )
         state.reports.forEach { rep ->
             GlassRaceCard {
                 Column(modifier = Modifier.padding(12.dp)) {
                     Text("[${rep.type}] ${rep.senderName}", style = MaterialTheme.typography.titleMedium, color = mx.goldAccent)
-                    Text(rep.message, style = MaterialTheme.typography.bodyMedium)
+                    Text(rep.message, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurface)
                 }
             }
         }
@@ -507,27 +554,32 @@ fun DirectorClubAdminTab(
     pendingDeleteRider?.let { target ->
         AlertDialog(
             onDismissRequest = { pendingDeleteRider = null },
-            title = { Text(if (strings.isSpanish) "Eliminar Cuenta" else "Delete Account") },
+            containerColor = MaterialTheme.colorScheme.surface,
+            titleContentColor = MaterialTheme.colorScheme.onSurface,
+            textContentColor = MaterialTheme.colorScheme.onSurface,
+            title = { Text(if (strings.isSpanish) "Eliminar Cuenta" else "Delete Account", style = MaterialTheme.typography.titleLarge) },
             text = {
                 Text(
                     if (strings.isSpanish) "¿Borrar definitivamente la cuenta de '${target.name}' y sus motos por mal uso?"
-                    else "Permanently delete '${target.name}' and all their bikes?"
+                    else "Permanently delete '${target.name}' and all their bikes?",
+                    style = MaterialTheme.typography.bodyMedium
                 )
             },
             confirmButton = {
-                Button(
+                Mx3dButton(
                     onClick = {
                         viewModel.deleteRiderAccount(target.id)
                         pendingDeleteRider = null
                     },
-                    colors = ButtonDefaults.buttonColors(containerColor = mx.racingRed, contentColor = Color.White)
+                    containerColor = mx.racingRed,
+                    contentColor = Color.White
                 ) {
                     Text(if (strings.isSpanish) "Eliminar" else "Delete")
                 }
             },
             dismissButton = {
                 TextButton(onClick = { pendingDeleteRider = null }) {
-                    Text(if (strings.isSpanish) "Cancelar" else "Cancel")
+                    Text(if (strings.isSpanish) "Cancelar" else "Cancel", color = mx.subtleText)
                 }
             }
         )

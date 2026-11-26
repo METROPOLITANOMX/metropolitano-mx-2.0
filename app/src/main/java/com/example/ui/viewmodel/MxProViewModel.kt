@@ -89,6 +89,8 @@ class MxProViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch {
             val devId = prefs.ensureDeviceId()
             val stored = prefs.prefsFlow.first()
+            val cachedRiders = repo.getCachedRiders()
+            val cachedLogged = cachedRiders.firstOrNull { it.id == stored.loggedInRiderId }
             _uiState.update {
                 it.copy(
                     sunMode = stored.sunMode,
@@ -96,7 +98,9 @@ class MxProViewModel(application: Application) : AndroidViewModel(application) {
                     rememberedName = stored.rememberedRiderName,
                     rememberedPass = stored.rememberedPassword,
                     rememberMe = stored.rememberMe,
-                    deviceId = devId
+                    deviceId = devId,
+                    riders = cachedRiders,
+                    currentRider = cachedLogged
                 )
             }
             voiceEngine.applyLocale(StringsProvider.current(stored.languageOverride).isSpanish)
@@ -105,16 +109,16 @@ class MxProViewModel(application: Application) : AndroidViewModel(application) {
             val circuits = repo.getCircuits()
             val active = circuits.firstOrNull { it.id == stored.activeCircuitId } ?: circuits.first()
             val globalCfg = repo.getGlobalConfig()
-            // Log visit
+            // Log visit cleanly and persist both locally and to Firebase RTDB
             val visitStamp = SimpleDateFormat("dd/MM HH:mm", Locale.getDefault()).format(Date())
             val updatedCfg = globalCfg.copy(
                 visitCount = globalCfg.visitCount + 1,
-                lastVisits = (listOf("$visitStamp ($devId)") + globalCfg.lastVisits).take(25)
+                lastVisits = (listOf("$visitStamp (${devId.take(6)})") + globalCfg.lastVisits).take(25)
             )
             repo.saveGlobalConfig(updatedCfg)
 
             val riders = repo.getRiders()
-            val loggedRider = riders.firstOrNull { it.id == stored.loggedInRiderId }
+            val loggedRider = riders.firstOrNull { it.id == stored.loggedInRiderId } ?: cachedLogged
 
             _uiState.update {
                 it.copy(
@@ -125,7 +129,7 @@ class MxProViewModel(application: Application) : AndroidViewModel(application) {
                     globalConfig = updatedCfg,
                     circuits = circuits,
                     activeCircuit = active,
-                    riders = riders,
+                    riders = riders.ifEmpty { cachedRiders },
                     currentRider = loggedRider
                 )
             }
@@ -360,6 +364,11 @@ class MxProViewModel(application: Application) : AndroidViewModel(application) {
             val activeChampId = state.activeChampionshipId.takeIf { id ->
                 championships.any { it.id == id }
             } ?: championships.firstOrNull()?.id.orEmpty()
+            val safeGlobalCfg = globalCfg.copy(
+                visitCount = maxOf(globalCfg.visitCount, state.globalConfig.visitCount),
+                lastVisits = globalCfg.lastVisits.ifEmpty { state.globalConfig.lastVisits }
+            )
+            val safeRiders = riders.ifEmpty { state.riders }
             state.copy(
                 isOnline = repo.isOnline(),
                 roomState = room,
@@ -370,12 +379,38 @@ class MxProViewModel(application: Application) : AndroidViewModel(application) {
                 championships = championships,
                 activeChampionshipId = activeChampId,
                 fanState = fan,
-                allBikes = bikes,
-                riders = riders,
-                globalConfig = globalCfg,
+                allBikes = bikes.ifEmpty { state.allBikes },
+                riders = safeRiders,
+                globalConfig = safeGlobalCfg,
                 currentRider = refreshedLoggedRider,
                 statusBannerMessage = forcedLogoutMsg ?: state.statusBannerMessage
             )
+        }
+    }
+
+    fun refreshDirectorDashboard() {
+        val circuitId = _uiState.value.activeCircuit.id
+        viewModelScope.launch {
+            val globalCfg = repo.getGlobalConfig()
+            val riders = repo.getRiders()
+            val antennas = repo.getAntennas(circuitId)
+            val reports = repo.getReports()
+            val capturedPasses = repo.getCapturedPasses(circuitId).take(12)
+            val bikes = repo.getAllBikes()
+            _uiState.update { st ->
+                st.copy(
+                    isOnline = repo.isOnline(),
+                    globalConfig = globalCfg.copy(
+                        visitCount = maxOf(globalCfg.visitCount, st.globalConfig.visitCount),
+                        lastVisits = globalCfg.lastVisits.ifEmpty { st.globalConfig.lastVisits }
+                    ),
+                    riders = riders.ifEmpty { st.riders },
+                    antennas = antennas,
+                    reports = reports,
+                    capturedPasses = capturedPasses,
+                    allBikes = bikes.ifEmpty { st.allBikes }
+                )
+            }
         }
     }
 
@@ -1293,12 +1328,28 @@ class MxProViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    fun pushAntennaLiveSnapshot(station: AntennaStation, base64: String) {
+    fun pushAntennaLiveSnapshot(station: AntennaStation, base64: String, fps: Int = 30) {
         val circuitId = _uiState.value.activeCircuit.id
+        val nowMs = syncedNowMs()
+        _uiState.update { st ->
+            val cur = st.antennas[station.id] ?: AntennaConfig(antennaId = station.id, circuitId = circuitId)
+            st.copy(
+                antennas = st.antennas + (station.id to cur.copy(
+                    lastSnapshotBase64 = base64,
+                    lastHeartbeatMs = nowMs,
+                    activeFps = fps,
+                    status = "ONLINE"
+                ))
+            )
+        }
         viewModelScope.launch {
             val patch = JSONObject().apply {
+                put("antennaId", station.id)
+                put("circuitId", circuitId)
                 put("lastSnapshotBase64", base64)
-                put("lastHeartbeatMs", syncedNowMs())
+                put("lastHeartbeatMs", nowMs)
+                put("activeFps", fps)
+                put("status", "ONLINE")
             }.toString()
             repo.patchAntennaTelemetry(circuitId, station.id, patch)
         }

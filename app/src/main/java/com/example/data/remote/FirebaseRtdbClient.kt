@@ -31,6 +31,7 @@ import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
+import org.json.JSONArray
 import org.json.JSONObject
 import java.io.BufferedReader
 import java.io.InputStreamReader
@@ -73,11 +74,6 @@ class FirebaseRtdbClient {
 
     fun syncedNowMs(): Long = System.currentTimeMillis() + serverTimeOffsetMs
 
-    /**
-     * Multi-sample NTP-style Firebase serverTimeOffset calibration:
-     * Issues 3 probes with {".sv":"timestamp"} to Firebase RTDB and uses SystemClock.elapsedRealtime()
-     * to measure round-trip time free from local wall-clock jitter, picking the lowest-RTT sample.
-     */
     suspend fun syncServerTimeOffset(deviceId: String): Long = withContext(Dispatchers.IO) {
         var bestRtt = Long.MAX_VALUE
         var bestOffset = serverTimeOffsetMs
@@ -124,11 +120,6 @@ class FirebaseRtdbClient {
         serverTimeOffsetMs
     }
 
-    /**
-     * Opens a Firebase RTDB REST Server-Sent Events (SSE) stream on a sub-path
-     * (e.g. "rooms/<circuitId>") so room phases, gate drops, flags, and antenna triggers
-     * arrive immediately across all connected devices.
-     */
     fun observePathEvents(path: String): Flow<String> = flow {
         while (currentCoroutineContext().isActive) {
             try {
@@ -170,34 +161,78 @@ class FirebaseRtdbClient {
             val req = Request.Builder().url("$BASE_URL/$path.json").get().build()
             http.newCall(req).execute().use { resp ->
                 val raw = resp.body?.string()
+                isOnline = resp.isSuccessful
                 if (!resp.isSuccessful || raw.isNullOrBlank() || raw == "null") {
-                    if (resp.isSuccessful) isOnline = true
                     return@withContext null
                 }
-                isOnline = true
-                moshi.adapter(T::class.java).fromJson(raw)
+                try {
+                    moshi.adapter(T::class.java).lenient().fromJson(raw)
+                } catch (e: Exception) {
+                    Log.w(TAG, "JSON decode warning at $path: ${e.message}")
+                    null
+                }
             }
         } catch (e: Exception) {
+            Log.w(TAG, "Network GET failed at $path: ${e.message}")
             isOnline = false
             null
         }
     }
 
+    /**
+     * Entry-by-entry fault-tolerant map reader: if any legacy/partial record in Firebase RTDB
+     * fails Moshi validation, only that bad entry is skipped instead of discarding the entire list.
+     */
     private suspend inline fun <reified T> getMap(path: String): Map<String, T> = withContext(Dispatchers.IO) {
         try {
             val req = Request.Builder().url("$BASE_URL/$path.json").get().build()
             http.newCall(req).execute().use { resp ->
                 val raw = resp.body?.string()
+                isOnline = resp.isSuccessful
                 if (!resp.isSuccessful || raw.isNullOrBlank() || raw == "null") {
-                    if (resp.isSuccessful) isOnline = true
                     return@withContext emptyMap()
                 }
-                isOnline = true
-                val type = Types.newParameterizedType(Map::class.java, String::class.java, T::class.java)
-                val adapter = moshi.adapter<Map<String, T>>(type)
-                adapter.fromJson(raw) ?: emptyMap()
+                val adapter = moshi.adapter(T::class.java).lenient()
+                val result = linkedMapOf<String, T>()
+                val trimmed = raw.trim()
+                when {
+                    trimmed.startsWith("{") -> {
+                        val obj = JSONObject(trimmed)
+                        val keys = obj.keys()
+                        while (keys.hasNext()) {
+                            val k = keys.next()
+                            val child = obj.opt(k)
+                            if (child != null && child != JSONObject.NULL) {
+                                try {
+                                    adapter.fromJson(child.toString())?.let { parsed ->
+                                        result[k] = parsed
+                                    }
+                                } catch (e: Exception) {
+                                    Log.w(TAG, "Skipping malformed entry '$k' at $path: ${e.message}")
+                                }
+                            }
+                        }
+                    }
+                    trimmed.startsWith("[") -> {
+                        val arr = JSONArray(trimmed)
+                        for (i in 0 until arr.length()) {
+                            val child = arr.opt(i)
+                            if (child != null && child != JSONObject.NULL) {
+                                try {
+                                    adapter.fromJson(child.toString())?.let { parsed ->
+                                        result[i.toString()] = parsed
+                                    }
+                                } catch (e: Exception) {
+                                    Log.w(TAG, "Skipping malformed array entry [$i] at $path: ${e.message}")
+                                }
+                            }
+                        }
+                    }
+                }
+                result
             }
         } catch (e: Exception) {
+            Log.w(TAG, "Network GET map failed at $path: ${e.message}")
             isOnline = false
             emptyMap()
         }
@@ -212,9 +247,13 @@ class FirebaseRtdbClient {
                 .build()
             http.newCall(req).execute().use { resp ->
                 isOnline = resp.isSuccessful
+                if (!resp.isSuccessful) {
+                    Log.w(TAG, "PUT failed $path code=${resp.code}")
+                }
                 resp.isSuccessful
             }
         } catch (e: Exception) {
+            Log.w(TAG, "Network PUT failed at $path: ${e.message}")
             isOnline = false
             false
         }
@@ -228,9 +267,13 @@ class FirebaseRtdbClient {
                 .build()
             http.newCall(req).execute().use { resp ->
                 isOnline = resp.isSuccessful
+                if (!resp.isSuccessful) {
+                    Log.w(TAG, "PATCH failed $path code=${resp.code}")
+                }
                 resp.isSuccessful
             }
         } catch (e: Exception) {
+            Log.w(TAG, "Network PATCH failed at $path: ${e.message}")
             isOnline = false
             false
         }
@@ -249,8 +292,49 @@ class FirebaseRtdbClient {
         }
     }
 
-    // --- Global Config ---
-    suspend fun fetchGlobalConfig(): GlobalConfig = getObject<GlobalConfig>("config") ?: GlobalConfig()
+    // --- Global Config (lenient parser handles legacy fields & RTDB arrays/maps) ---
+    suspend fun fetchGlobalConfig(): GlobalConfig? = withContext(Dispatchers.IO) {
+        try {
+            val req = Request.Builder().url("$BASE_URL/config.json").get().build()
+            http.newCall(req).execute().use { resp ->
+                val raw = resp.body?.string()
+                isOnline = resp.isSuccessful
+                if (!resp.isSuccessful) return@withContext null
+                if (raw.isNullOrBlank() || raw == "null") return@withContext GlobalConfig()
+                val obj = JSONObject(raw)
+                val regOpen = obj.optBoolean("registrationOpen", true)
+                val pwdHash = obj.optString("directorPasswordHash", GlobalConfig().directorPasswordHash)
+                    .ifBlank { GlobalConfig().directorPasswordHash }
+                val visitsCount = obj.optInt("visitCount", 0)
+                val visitsList = mutableListOf<String>()
+                when (val lv = obj.opt("lastVisits")) {
+                    is JSONArray -> {
+                        for (i in 0 until lv.length()) {
+                            lv.optString(i).takeIf { it.isNotBlank() }?.let { visitsList.add(it) }
+                        }
+                    }
+                    is JSONObject -> {
+                        val ks = lv.keys()
+                        while (ks.hasNext()) {
+                            val k = ks.next()
+                            lv.optString(k).takeIf { it.isNotBlank() }?.let { visitsList.add(it) }
+                        }
+                    }
+                }
+                GlobalConfig(
+                    registrationOpen = regOpen,
+                    directorPasswordHash = pwdHash,
+                    visitCount = visitsCount,
+                    lastVisits = visitsList
+                )
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "fetchGlobalConfig failed: ${e.message}")
+            isOnline = false
+            null
+        }
+    }
+
     suspend fun saveGlobalConfig(config: GlobalConfig): Boolean = putObject("config", config)
 
     // --- Circuits ---
@@ -258,7 +342,7 @@ class FirebaseRtdbClient {
         val map = getMap<Circuit>("circuits")
         val official = Circuit()
         if (map.isEmpty()) {
-            putObject("circuits/${official.id}", official)
+            if (isOnline) putObject("circuits/${official.id}", official)
             return listOf(official)
         }
         val list = map.values.toMutableList()
@@ -305,19 +389,29 @@ class FirebaseRtdbClient {
 
     // --- Antennas ---
     suspend fun fetchAntennas(circuitId: String): Map<String, AntennaConfig> {
-        val map = getMap<AntennaConfig>("antennas/$circuitId")
-        return map.ifEmpty {
-            mapOf(
-                AntennaStation.ANTENA_1.id to AntennaConfig(
-                    antennaId = AntennaStation.ANTENA_1.id,
-                    circuitId = circuitId
-                ),
-                AntennaStation.ANTENA_2.id to AntennaConfig(
-                    antennaId = AntennaStation.ANTENA_2.id,
-                    circuitId = circuitId
-                )
+        val fetched = getMap<AntennaConfig>("antennas/$circuitId")
+        val merged = linkedMapOf(
+            AntennaStation.ANTENA_1.id to AntennaConfig(
+                antennaId = AntennaStation.ANTENA_1.id,
+                circuitId = circuitId
+            ),
+            AntennaStation.ANTENA_2.id to AntennaConfig(
+                antennaId = AntennaStation.ANTENA_2.id,
+                circuitId = circuitId
+            ),
+            AntennaStation.ANTENA_TEMP.id to AntennaConfig(
+                antennaId = AntennaStation.ANTENA_TEMP.id,
+                circuitId = circuitId
+            )
+        )
+        fetched.forEach { (key, value) ->
+            val id = value.antennaId.ifBlank { key }
+            merged[key] = value.copy(
+                antennaId = id,
+                circuitId = value.circuitId.ifBlank { circuitId }
             )
         }
+        return merged
     }
 
     suspend fun saveAntennaConfig(config: AntennaConfig): Boolean =

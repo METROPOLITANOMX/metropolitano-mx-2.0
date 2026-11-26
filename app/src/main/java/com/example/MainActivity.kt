@@ -44,6 +44,11 @@ class MainActivity : ComponentActivity() {
             val navController = rememberNavController()
 
             MetropolitanoMxTheme(sunMode = state.sunMode) {
+                androidx.compose.material3.Surface(
+                    modifier = Modifier.fillMaxSize(),
+                    color = androidx.compose.material3.MaterialTheme.colorScheme.background,
+                    contentColor = androidx.compose.material3.MaterialTheme.colorScheme.onBackground
+                ) {
                 Box(modifier = Modifier.fillMaxSize()) {
                     NavHost(
                         navController = navController,
@@ -115,6 +120,7 @@ class MainActivity : ComponentActivity() {
                             Text(msg, color = androidx.compose.material3.MaterialTheme.colorScheme.onSurface)
                         }
                     }
+                }
                 }
             }
         }

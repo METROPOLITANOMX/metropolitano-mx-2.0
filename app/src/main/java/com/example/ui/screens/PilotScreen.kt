@@ -31,8 +31,6 @@ import androidx.compose.material.icons.filled.Radio
 import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material.icons.filled.Timer
 import androidx.compose.material.icons.filled.TouchApp
-import androidx.compose.material3.Button
-import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -40,7 +38,6 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Tab
 import androidx.compose.material3.TabRow
 import androidx.compose.material3.Text
-import androidx.compose.material3.minimumInteractiveComponentSize
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -64,14 +61,18 @@ import com.example.data.model.SessionPhase
 import com.example.data.model.formatDeltaMs
 import com.example.data.model.formatLapMs
 import com.example.i18n.MxStrings
+import com.example.ui.components.AnimatedCheckeredRibbon
 import com.example.ui.components.CarbonStadiumBackdrop
 import com.example.ui.components.FlagAndRecordFrameOverlay
 import com.example.ui.components.GlassRaceCard
+import com.example.ui.components.Mx3dButton
+import com.example.ui.components.Mx3dOutlinedButton
 import com.example.ui.components.MxTopHeader
 import com.example.ui.components.RiderDorsalBadge
 import com.example.ui.components.SupercrossStartGateCard
 import com.example.ui.theme.LocalMxColors
 import com.example.ui.theme.contrastTextOn
+import com.example.ui.theme.mxChipColors
 import com.example.ui.viewmodel.MxProViewModel
 import com.example.ui.viewmodel.MxUiState
 import kotlinx.coroutines.delay
@@ -176,12 +177,10 @@ fun PilotScreen(
                     color = if (lastDelta <= 0L) mx.telemetryGreen else mx.racingRed
                 )
             }
-            Button(
+            Mx3dButton(
                 onClick = { viewModel.recordManualLapForCurrentRider() },
-                colors = ButtonDefaults.buttonColors(
-                    containerColor = mx.goldAccent,
-                    contentColor = contrastTextOn(mx.goldAccent)
-                ),
+                containerColor = mx.goldAccent,
+                contentColor = contrastTextOn(mx.goldAccent),
                 modifier = Modifier.fillMaxWidth().height(72.dp).testTag("transmitter_manual_lap")
             ) {
                 Text(strings.manualLap.uppercase(), style = MaterialTheme.typography.headlineMedium)
@@ -213,10 +212,14 @@ fun PilotScreen(
                     onTogglePaMute = { viewModel.togglePaAudioMute() }
                 )
 
-                TabRow(selectedTabIndex = selectedTab) {
-                    Tab(selected = selectedTab == 0, onClick = { selectedTab = 0 }, text = { Text(strings.tabTrackRoom) })
-                    Tab(selected = selectedTab == 1, onClick = { selectedTab = 1 }, text = { Text(strings.tabGaragePro) })
-                    Tab(selected = selectedTab == 2, onClick = { selectedTab = 2 }, text = { Text(strings.tabTelemetry) })
+                TabRow(
+                    selectedTabIndex = selectedTab,
+                    containerColor = MaterialTheme.colorScheme.surface,
+                    contentColor = mx.goldAccent
+                ) {
+                    Tab(selected = selectedTab == 0, onClick = { selectedTab = 0 }, selectedContentColor = mx.goldAccent, unselectedContentColor = MaterialTheme.colorScheme.onSurface, text = { Text(strings.tabTrackRoom) })
+                    Tab(selected = selectedTab == 1, onClick = { selectedTab = 1 }, selectedContentColor = mx.goldAccent, unselectedContentColor = MaterialTheme.colorScheme.onSurface, text = { Text(strings.tabGaragePro) })
+                    Tab(selected = selectedTab == 2, onClick = { selectedTab = 2 }, selectedContentColor = mx.goldAccent, unselectedContentColor = MaterialTheme.colorScheme.onSurface, text = { Text(strings.tabTelemetry) })
                 }
 
                 when (selectedTab) {
@@ -275,6 +278,7 @@ private fun PilotTrackRoomTab(
             .padding(16.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
+        AnimatedCheckeredRibbon()
         // Antennas + Track Status + Flag + Game Mode
         GlassRaceCard {
             Column(modifier = Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -408,15 +412,12 @@ private fun PilotTrackRoomTab(
                     }
                 }
                 Spacer(Modifier.height(12.dp))
-                Button(
+                Mx3dButton(
                     onClick = { viewModel.recordManualLapForCurrentRider() },
-                    colors = ButtonDefaults.buttonColors(
-                        containerColor = mx.goldAccent,
-                        contentColor = contrastTextOn(mx.goldAccent)
-                    ),
+                    containerColor = mx.goldAccent,
+                    contentColor = contrastTextOn(mx.goldAccent),
                     modifier = Modifier
                         .fillMaxWidth()
-                        .minimumInteractiveComponentSize()
                         .testTag("pilot_manual_lap_button")
                 ) {
                     Icon(Icons.Default.TouchApp, contentDescription = null)
@@ -428,33 +429,32 @@ private fun PilotTrackRoomTab(
 
         // Transmitter Mode, Pocket Mode & Solo Phone-as-Antenna Mode
         Row(horizontalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.fillMaxWidth()) {
-            OutlinedButton(
+            Mx3dOutlinedButton(
                 onClick = onEnableTransmitterMode,
-                modifier = Modifier.weight(1f).minimumInteractiveComponentSize().testTag("pilot_transmitter_mode_button")
+                borderColor = mx.goldAccent,
+                modifier = Modifier.weight(1f).testTag("pilot_transmitter_mode_button")
             ) {
-                Icon(Icons.Default.Radio, contentDescription = null, modifier = Modifier.size(18.dp))
+                Icon(Icons.Default.Radio, contentDescription = null, modifier = Modifier.size(18.dp), tint = mx.goldAccent)
                 Spacer(Modifier.width(6.dp))
-                Text(strings.transmitterMode)
+                Text(strings.transmitterMode, maxLines = 1)
             }
-            OutlinedButton(
+            Mx3dOutlinedButton(
                 onClick = onEnablePocketMode,
-                modifier = Modifier.weight(1f).minimumInteractiveComponentSize().testTag("pilot_pocket_mode_button")
+                borderColor = mx.smBadge,
+                modifier = Modifier.weight(1f).testTag("pilot_pocket_mode_button")
             ) {
-                Icon(Icons.Default.Timer, contentDescription = null, modifier = Modifier.size(18.dp))
+                Icon(Icons.Default.Timer, contentDescription = null, modifier = Modifier.size(18.dp), tint = mx.smBadge)
                 Spacer(Modifier.width(6.dp))
-                Text(strings.pocketMode)
+                Text(strings.pocketMode, maxLines = 1)
             }
         }
 
-        Button(
+        Mx3dButton(
             onClick = onEnableSoloAntennaMode,
-            colors = ButtonDefaults.buttonColors(
-                containerColor = mx.smBadge,
-                contentColor = contrastTextOn(mx.smBadge)
-            ),
+            containerColor = mx.smBadge,
+            contentColor = contrastTextOn(mx.smBadge),
             modifier = Modifier
                 .fillMaxWidth()
-                .minimumInteractiveComponentSize()
                 .testTag("pilot_solo_antenna_button")
         ) {
             Icon(Icons.Default.CameraAlt, contentDescription = null)
@@ -474,63 +474,63 @@ private fun PilotTrackRoomTab(
                         FilterChip(
                             selected = room.gameMode == gm,
                             onClick = { viewModel.updateRoomSettings(gameMode = gm) },
-                            label = { Text(gm.name.replace("_", " ")) }
+                            label = { Text(gm.name.replace("_", " ")) },
+                            colors = mxChipColors()
                         )
                     }
                 }
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
-                    OutlinedButton(
+                    Mx3dOutlinedButton(
                         onClick = { viewModel.runFriendly10sCalibration() },
-                        modifier = Modifier.weight(1f).minimumInteractiveComponentSize()
+                        borderColor = mx.telemetryGreen,
+                        modifier = Modifier.weight(1f)
                     ) { Text(strings.calibrate10s, maxLines = 1) }
-                    OutlinedButton(
+                    Mx3dOutlinedButton(
                         onClick = { viewModel.startFriendlyWarmup() },
-                        modifier = Modifier.weight(1f).minimumInteractiveComponentSize()
+                        borderColor = mx.goldAccent,
+                        modifier = Modifier.weight(1f)
                     ) { Text(strings.startWarmup, maxLines = 1) }
                 }
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
-                    OutlinedButton(
+                    Mx3dOutlinedButton(
                         onClick = { viewModel.startFriendly30sGate() },
-                        modifier = Modifier.weight(1f).minimumInteractiveComponentSize()
+                        borderColor = mx.racingRed,
+                        modifier = Modifier.weight(1f)
                     ) { Text(strings.startLight30s, maxLines = 1) }
-                    OutlinedButton(
+                    Mx3dOutlinedButton(
                         onClick = { viewModel.startFriendlyRandomGate() },
-                        modifier = Modifier.weight(1f).minimumInteractiveComponentSize()
+                        borderColor = mx.smBadge,
+                        modifier = Modifier.weight(1f)
                     ) { Text(strings.randomGate, maxLines = 1) }
                 }
                 if (room.sessionPhase == SessionPhase.WARMUP ||
                     room.sessionPhase == SessionPhase.RACING ||
                     room.sessionPhase == SessionPhase.COUNTDOWN_30
                 ) {
-                    Button(
+                    Mx3dButton(
                         onClick = { viewModel.stopSession() },
-                        colors = ButtonDefaults.buttonColors(
-                            containerColor = mx.racingRed,
-                            contentColor = contrastTextOn(mx.racingRed)
-                        ),
+                        containerColor = mx.racingRed,
+                        contentColor = Color.White,
                         modifier = Modifier
                             .fillMaxWidth()
-                            .minimumInteractiveComponentSize()
                             .testTag("friendly_stop_session_button")
                     ) {
                         Icon(Icons.Default.Stop, contentDescription = null)
                         Spacer(Modifier.width(6.dp))
                         Text(
                             if (room.sessionPhase == SessionPhase.WARMUP) {
-                                if (strings.isSpanish) "STOP WARM-UP" else "STOP WARM-UP"
+                                "STOP WARM-UP"
                             } else {
                                 if (strings.isSpanish) "STOP CARRERA" else "STOP RACE"
                             }
                         )
                     }
                 }
-                Button(
+                Mx3dButton(
                     onClick = { viewModel.spinCrazyMxRoulette() },
-                    colors = ButtonDefaults.buttonColors(
-                        containerColor = mx.racingRed,
-                        contentColor = contrastTextOn(mx.racingRed)
-                    ),
-                    modifier = Modifier.fillMaxWidth().minimumInteractiveComponentSize().testTag("crazy_roulette_button")
+                    containerColor = mx.racingRed,
+                    contentColor = Color.White,
+                    modifier = Modifier.fillMaxWidth().testTag("crazy_roulette_button")
                 ) {
                     Icon(Icons.Default.Casino, contentDescription = null)
                     Spacer(Modifier.width(8.dp))
@@ -546,11 +546,12 @@ private fun PilotTrackRoomTab(
             }
         }
 
-        OutlinedButton(
+        Mx3dOutlinedButton(
             onClick = onLogout,
-            modifier = Modifier.fillMaxWidth().minimumInteractiveComponentSize()
+            borderColor = mx.glassBorder,
+            modifier = Modifier.fillMaxWidth()
         ) {
-            Icon(Icons.Default.Logout, contentDescription = null, modifier = Modifier.size(18.dp))
+            Icon(Icons.Default.Logout, contentDescription = null, modifier = Modifier.size(18.dp), tint = mx.racingRed)
             Spacer(Modifier.width(6.dp))
             Text(if (strings.isSpanish) "Cerrar Sesión de Piloto" else "Sign Out Rider")
         }

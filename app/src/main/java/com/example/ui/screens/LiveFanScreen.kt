@@ -28,7 +28,6 @@ import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.ThumbUp
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
-import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -36,7 +35,6 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
-import androidx.compose.material3.minimumInteractiveComponentSize
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -58,11 +56,13 @@ import com.example.data.model.SurfaceType
 import com.example.data.model.formatDeltaMs
 import com.example.data.model.formatLapMs
 import com.example.i18n.MxStrings
+import com.example.ui.components.AnimatedCheckeredRibbon
 import com.example.ui.components.Base64ImageView
 import com.example.ui.components.CarbonStadiumBackdrop
 import com.example.ui.components.FlagAndRecordFrameOverlay
 import com.example.ui.components.GlassRaceCard
 import com.example.ui.components.LapTelemetryChartCard
+import com.example.ui.components.Mx3dButton
 import com.example.ui.components.MxTopHeader
 import com.example.ui.components.PulsingLiveDot
 import com.example.ui.components.RiderDorsalBadge
@@ -70,6 +70,8 @@ import com.example.ui.components.SupercrossStartGateCard
 import com.example.ui.components.SurfaceBadge
 import com.example.ui.theme.LocalMxColors
 import com.example.ui.theme.contrastTextOn
+import com.example.ui.theme.mxChipColors
+import com.example.ui.theme.mxTextFieldColors
 import com.example.ui.viewmodel.MxProViewModel
 import com.example.ui.viewmodel.MxUiState
 import kotlinx.coroutines.delay
@@ -253,6 +255,7 @@ fun LiveFanScreen(
                         .padding(16.dp),
                     verticalArrangement = Arrangement.spacedBy(12.dp)
                 ) {
+                    AnimatedCheckeredRibbon()
                     SupercrossStartGateCard(
                         sessionPhase = state.roomState.sessionPhase,
                         phaseEndTimeMs = state.roomState.phaseEndTimeMs,
@@ -306,9 +309,9 @@ fun LiveFanScreen(
                                 color = mx.goldAccent
                             )
                             Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                                FilterChip(selected = classFilter == null, onClick = { classFilter = null }, label = { Text(if (strings.isSpanish) "Todas" else "All") })
-                                FilterChip(selected = classFilter == SurfaceType.MX, onClick = { classFilter = SurfaceType.MX }, label = { Text("MX Tierra") })
-                                FilterChip(selected = classFilter == SurfaceType.SM, onClick = { classFilter = SurfaceType.SM }, label = { Text("SM Supermotard") })
+                                FilterChip(selected = classFilter == null, onClick = { classFilter = null }, label = { Text(if (strings.isSpanish) "Todas" else "All") }, colors = mxChipColors())
+                                FilterChip(selected = classFilter == SurfaceType.MX, onClick = { classFilter = SurfaceType.MX }, label = { Text("MX Tierra") }, colors = mxChipColors())
+                                FilterChip(selected = classFilter == SurfaceType.SM, onClick = { classFilter = SurfaceType.SM }, label = { Text("SM Supermotard") }, colors = mxChipColors())
                             }
                             if (leaderboard.isEmpty()) {
                                 Text(
@@ -405,13 +408,11 @@ fun LiveFanScreen(
 
                 // Crowd Ovation (Every 10 taps fires live applause!)
                 val toNextTen = 10 - (state.fanState.ovationCount % 10)
-                Button(
+                Mx3dButton(
                     onClick = { viewModel.tapStadiumOvation() },
-                    colors = ButtonDefaults.buttonColors(
-                        containerColor = mx.goldAccent,
-                        contentColor = contrastTextOn(mx.goldAccent)
-                    ),
-                    modifier = Modifier.fillMaxWidth().minimumInteractiveComponentSize().testTag("fan_ovation_button")
+                    containerColor = mx.goldAccent,
+                    contentColor = contrastTextOn(mx.goldAccent),
+                    modifier = Modifier.fillMaxWidth().testTag("fan_ovation_button")
                 ) {
                     Icon(Icons.Default.Campaign, contentDescription = null)
                     Spacer(Modifier.width(8.dp))
@@ -452,7 +453,8 @@ fun LiveFanScreen(
                                     FilterChip(
                                         selected = false,
                                         onClick = { viewModel.voteMvp(r.riderName) },
-                                        label = { Text("${r.riderName} ($votes)") }
+                                        label = { Text("${r.riderName} ($votes)") },
+                                        colors = mxChipColors()
                                     )
                                 }
                             }
@@ -468,15 +470,17 @@ fun LiveFanScreen(
                             Spacer(Modifier.width(6.dp))
                             Text(strings.cheerMessage, style = MaterialTheme.typography.titleMedium)
                         }
-                        OutlinedTextField(value = fanName, onValueChange = { fanName = it }, label = { Text("Tu nombre / Your name") }, singleLine = true, modifier = Modifier.fillMaxWidth())
-                        OutlinedTextField(value = cheerTarget, onValueChange = { cheerTarget = it }, label = { Text("Piloto / Rider (opcional)") }, singleLine = true, modifier = Modifier.fillMaxWidth())
-                        OutlinedTextField(value = cheerInput, onValueChange = { cheerInput = it }, label = { Text("Mensaje / Cheer") }, singleLine = true, modifier = Modifier.fillMaxWidth())
-                        Button(
+                        OutlinedTextField(value = fanName, onValueChange = { fanName = it }, label = { Text("Tu nombre / Your name") }, singleLine = true, colors = mxTextFieldColors(), modifier = Modifier.fillMaxWidth())
+                        OutlinedTextField(value = cheerTarget, onValueChange = { cheerTarget = it }, label = { Text("Piloto / Rider (opcional)") }, singleLine = true, colors = mxTextFieldColors(), modifier = Modifier.fillMaxWidth())
+                        OutlinedTextField(value = cheerInput, onValueChange = { cheerInput = it }, label = { Text("Mensaje / Cheer") }, singleLine = true, colors = mxTextFieldColors(), modifier = Modifier.fillMaxWidth())
+                        Mx3dButton(
                             onClick = {
                                 viewModel.sendCheerMessage(fanName, cheerTarget, cheerInput)
                                 cheerInput = ""
                             },
-                            modifier = Modifier.fillMaxWidth().minimumInteractiveComponentSize()
+                            containerColor = mx.smBadge,
+                            contentColor = contrastTextOn(mx.smBadge),
+                            modifier = Modifier.fillMaxWidth()
                         ) { Text(if (strings.isSpanish) "Enviar a Megafonía" else "Send to PA") }
 
                         state.fanState.cheerMessages.take(4).forEach { msg ->
@@ -497,7 +501,10 @@ fun LiveFanScreen(
     spyRider?.let { r ->
         AlertDialog(
             onDismissRequest = { spyRider = null },
-            title = { Text("${strings.setupSpyTitle}: ${r.riderName} #${r.dorsal}") },
+            containerColor = MaterialTheme.colorScheme.surface,
+            titleContentColor = MaterialTheme.colorScheme.onSurface,
+            textContentColor = MaterialTheme.colorScheme.onSurface,
+            title = { Text("${strings.setupSpyTitle}: ${r.riderName} #${r.dorsal}", style = MaterialTheme.typography.titleLarge) },
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
                     Text("${r.bikeModel} (${r.discipline})", style = MaterialTheme.typography.titleMedium)
@@ -505,7 +512,7 @@ fun LiveFanScreen(
                     Text("${strings.bestLap}: ${formatLapMs(r.bestLapMs)} • ${r.lapsCount} laps", style = MaterialTheme.typography.labelMedium, color = mx.telemetryGreen)
                 }
             },
-            confirmButton = { TextButton(onClick = { spyRider = null }) { Text("OK") } }
+            confirmButton = { TextButton(onClick = { spyRider = null }) { Text("OK", color = mx.goldAccent) } }
         )
     }
 }

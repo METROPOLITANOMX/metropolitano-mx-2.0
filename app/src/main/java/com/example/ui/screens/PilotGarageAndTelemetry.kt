@@ -29,17 +29,13 @@ import androidx.compose.material.icons.filled.Public
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.filled.Upload
 import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.Button
-import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
-import androidx.compose.material3.minimumInteractiveComponentSize
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -64,10 +60,14 @@ import com.example.i18n.MxStrings
 import com.example.ui.components.Base64ImageView
 import com.example.ui.components.GlassRaceCard
 import com.example.ui.components.LapTelemetryChartCard
+import com.example.ui.components.Mx3dButton
+import com.example.ui.components.Mx3dOutlinedButton
 import com.example.ui.components.RiderDorsalBadge
 import com.example.ui.components.SurfaceBadge
 import com.example.ui.theme.LocalMxColors
 import com.example.ui.theme.contrastTextOn
+import com.example.ui.theme.mxChipColors
+import com.example.ui.theme.mxTextFieldColors
 import com.example.ui.viewmodel.MxProViewModel
 import com.example.ui.viewmodel.MxUiState
 import java.io.ByteArrayOutputStream
@@ -111,22 +111,20 @@ fun PilotGarageProTab(
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically
         ) {
-            Text(strings.tabGaragePro, style = MaterialTheme.typography.headlineMedium)
-            Button(
+            Text(strings.tabGaragePro, style = MaterialTheme.typography.headlineMedium, color = MaterialTheme.colorScheme.onBackground)
+            Mx3dButton(
                 onClick = {
                     editingBike = BikeSetup.defaultsFor(state.activeCircuit.surface).copy(
                         id = "b_${UUID.randomUUID().toString().take(8)}"
                     )
                 },
-                colors = ButtonDefaults.buttonColors(
-                    containerColor = mx.goldAccent,
-                    contentColor = contrastTextOn(mx.goldAccent)
-                ),
-                modifier = Modifier.minimumInteractiveComponentSize().testTag("garage_add_bike")
+                containerColor = mx.goldAccent,
+                contentColor = contrastTextOn(mx.goldAccent),
+                modifier = Modifier.width(155.dp).testTag("garage_add_bike")
             ) {
                 Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(18.dp))
                 Spacer(Modifier.width(4.dp))
-                Text(strings.addBike)
+                Text(strings.addBike, maxLines = 1)
             }
         }
 
@@ -137,7 +135,8 @@ fun PilotGarageProTab(
                     FilterChip(
                         selected = b.id == activeBike?.id,
                         onClick = { viewModel.saveBikeSetup(b, setActive = true) },
-                        label = { Text("${b.modelName} #${b.dorsal}") }
+                        label = { Text("${b.modelName} #${b.dorsal}") },
+                        colors = mxChipColors()
                     )
                 }
             }
@@ -177,19 +176,21 @@ fun PilotGarageProTab(
                     }
 
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
-                        OutlinedButton(
+                        Mx3dOutlinedButton(
                             onClick = { photoTakeLauncher.launch(null) },
-                            modifier = Modifier.weight(1f).minimumInteractiveComponentSize()
+                            borderColor = mx.smBadge,
+                            modifier = Modifier.weight(1f)
                         ) {
-                            Icon(Icons.Default.CameraAlt, contentDescription = null, modifier = Modifier.size(16.dp))
+                            Icon(Icons.Default.CameraAlt, contentDescription = null, modifier = Modifier.size(16.dp), tint = mx.smBadge)
                             Spacer(Modifier.width(4.dp))
-                            Text("${strings.takePhoto} (${activeBike.photoBase64List.size}/4)")
+                            Text("${strings.takePhoto} (${activeBike.photoBase64List.size}/4)", maxLines = 1)
                         }
-                        OutlinedButton(
+                        Mx3dOutlinedButton(
                             onClick = { editingBike = activeBike },
-                            modifier = Modifier.weight(1f).minimumInteractiveComponentSize()
+                            borderColor = mx.goldAccent,
+                            modifier = Modifier.weight(1f)
                         ) {
-                            Text(if (strings.isSpanish) "Editar Reglaje" else "Edit Setup")
+                            Text(if (strings.isSpanish) "Editar Reglaje" else "Edit Setup", maxLines = 1)
                         }
                     }
 
@@ -250,8 +251,12 @@ fun PilotGarageProTab(
                                         color = mx.subtleText
                                     )
                                 }
-                                OutlinedButton(onClick = { viewModel.incrementLipoCycle(activeBike) }) {
-                                    Text(if (strings.isSpanish) "+1 Ciclo LiPo" else "+1 LiPo Cycle")
+                                Mx3dOutlinedButton(
+                                    onClick = { viewModel.incrementLipoCycle(activeBike) },
+                                    borderColor = mx.goldBright,
+                                    modifier = Modifier.width(135.dp)
+                                ) {
+                                    Text(if (strings.isSpanish) "+1 Ciclo LiPo" else "+1 LiPo Cycle", maxLines = 1)
                                 }
                             }
 
@@ -288,30 +293,30 @@ fun PilotGarageProTab(
                     }
 
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
-                        Button(
+                        Mx3dButton(
                             onClick = {
                                 val txt = CardExporter.formatSetupShareText(state.currentRider?.name ?: "", activeBike, strings.isSpanish)
                                 CardExporter.shareWhatsAppText(context, txt)
                             },
-                            modifier = Modifier.weight(1f).minimumInteractiveComponentSize()
+                            containerColor = mx.telemetryGreen,
+                            contentColor = contrastTextOn(mx.telemetryGreen),
+                            modifier = Modifier.weight(1f)
                         ) {
                             Icon(Icons.Default.Share, contentDescription = null, modifier = Modifier.size(16.dp))
                             Spacer(Modifier.width(4.dp))
                             Text(strings.shareWhatsApp, maxLines = 1)
                         }
                         val paddockColor = if (activeBike.publishedToPaddock) mx.telemetryGreen else mx.smBadge
-                        Button(
+                        Mx3dButton(
                             onClick = {
                                 viewModel.saveBikeSetup(
                                     activeBike.copy(publishedToPaddock = !activeBike.publishedToPaddock),
                                     setActive = false
                                 )
                             },
-                            colors = ButtonDefaults.buttonColors(
-                                containerColor = paddockColor,
-                                contentColor = contrastTextOn(paddockColor)
-                            ),
-                            modifier = Modifier.weight(1f).minimumInteractiveComponentSize()
+                            containerColor = paddockColor,
+                            contentColor = contrastTextOn(paddockColor),
+                            modifier = Modifier.weight(1f)
                         ) {
                             Icon(Icons.Default.Public, contentDescription = null, modifier = Modifier.size(16.dp))
                             Spacer(Modifier.width(4.dp))
@@ -328,24 +333,24 @@ fun PilotGarageProTab(
 
         // Export / Restore Backup
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
-            OutlinedButton(
+            Mx3dOutlinedButton(
                 onClick = {
                     val json = viewModel.exportGarageBackupJson()
                     CardExporter.shareWhatsAppText(context, json)
                 },
-                modifier = Modifier.weight(1f).minimumInteractiveComponentSize()
+                modifier = Modifier.weight(1f)
             ) {
-                Icon(Icons.Default.Upload, contentDescription = null, modifier = Modifier.size(16.dp))
+                Icon(Icons.Default.Upload, contentDescription = null, modifier = Modifier.size(16.dp), tint = mx.goldAccent)
                 Spacer(Modifier.width(4.dp))
-                Text(strings.exportBackup)
+                Text(strings.exportBackup, maxLines = 1)
             }
-            OutlinedButton(
+            Mx3dOutlinedButton(
                 onClick = { showBackupRestore = true },
-                modifier = Modifier.weight(1f).minimumInteractiveComponentSize()
+                modifier = Modifier.weight(1f)
             ) {
-                Icon(Icons.Default.Download, contentDescription = null, modifier = Modifier.size(16.dp))
+                Icon(Icons.Default.Download, contentDescription = null, modifier = Modifier.size(16.dp), tint = mx.smBadge)
                 Spacer(Modifier.width(4.dp))
-                Text(strings.restoreBackup)
+                Text(strings.restoreBackup, maxLines = 1)
             }
         }
     }
@@ -365,22 +370,30 @@ fun PilotGarageProTab(
     if (showBackupRestore) {
         AlertDialog(
             onDismissRequest = { showBackupRestore = false },
-            title = { Text(strings.restoreBackup) },
+            containerColor = MaterialTheme.colorScheme.surface,
+            titleContentColor = MaterialTheme.colorScheme.onSurface,
+            textContentColor = MaterialTheme.colorScheme.onSurface,
+            title = { Text(strings.restoreBackup, style = MaterialTheme.typography.titleLarge) },
             text = {
                 OutlinedTextField(
                     value = backupText,
                     onValueChange = { backupText = it },
                     label = { Text("JSON Backup") },
-                    minLines = 4
+                    minLines = 4,
+                    colors = mxTextFieldColors()
                 )
             },
             confirmButton = {
-                Button(onClick = {
-                    viewModel.restoreGarageBackupJson(backupText)
-                    showBackupRestore = false
-                }) { Text(strings.restoreBackup) }
+                Mx3dButton(
+                    onClick = {
+                        viewModel.restoreGarageBackupJson(backupText)
+                        showBackupRestore = false
+                    },
+                    containerColor = mx.goldAccent,
+                    contentColor = contrastTextOn(mx.goldAccent)
+                ) { Text(strings.restoreBackup) }
             },
-            dismissButton = { TextButton(onClick = { showBackupRestore = false }) { Text("Cancel") } }
+            dismissButton = { TextButton(onClick = { showBackupRestore = false }) { Text("Cancel", color = mx.subtleText) } }
         )
     }
 }
@@ -430,7 +443,7 @@ fun PilotTelemetryTab(
 
             // Export PNG Summary Card & MXGP Podium
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
-                Button(
+                Mx3dButton(
                     onClick = {
                         val todayBest = myLaps.filter { it.lapTimeMs > 0 }.minOfOrNull { it.lapTimeMs } ?: rider.bestLapMs
                         CardExporter.generateAndShareSummaryPng(
@@ -443,24 +456,24 @@ fun PilotTelemetryTab(
                             isSpanish = strings.isSpanish
                         )
                     },
-                    modifier = Modifier.weight(1f).minimumInteractiveComponentSize()
+                    containerColor = mx.goldAccent,
+                    contentColor = contrastTextOn(mx.goldAccent),
+                    modifier = Modifier.weight(1f)
                 ) {
                     Icon(Icons.Default.Download, contentDescription = null, modifier = Modifier.size(16.dp))
                     Spacer(Modifier.width(4.dp))
                     Text(strings.downloadPngCard, maxLines = 1)
                 }
-                Button(
+                Mx3dButton(
                     onClick = {
                         val top3 = state.roomState.activeRiders.values
                             .sortedWith(compareByDescending<com.example.data.model.ActiveRoomRider> { it.lapsCount }.thenBy { if (it.bestLapMs <= 0) Long.MAX_VALUE else it.bestLapMs })
                             .take(3)
                         CardExporter.generateAndShareMxgpPodium(context, state.activeCircuit, top3, strings.isSpanish)
                     },
-                    colors = ButtonDefaults.buttonColors(
-                        containerColor = mx.smBadge,
-                        contentColor = contrastTextOn(mx.smBadge)
-                    ),
-                    modifier = Modifier.weight(1f).minimumInteractiveComponentSize()
+                    containerColor = mx.smBadge,
+                    contentColor = contrastTextOn(mx.smBadge),
+                    modifier = Modifier.weight(1f)
                 ) {
                     Icon(Icons.Default.EmojiEvents, contentDescription = null, modifier = Modifier.size(16.dp))
                     Spacer(Modifier.width(4.dp))
@@ -485,7 +498,8 @@ fun PilotTelemetryTab(
                             FilterChip(
                                 selected = r.riderId == selectedRivalId,
                                 onClick = { selectedRivalId = r.riderId },
-                                label = { Text("${r.riderName} #${r.dorsal}") }
+                                label = { Text("${r.riderName} #${r.dorsal}") },
+                                colors = mxChipColors()
                             )
                         }
                     }

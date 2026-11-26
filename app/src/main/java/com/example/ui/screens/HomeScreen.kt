@@ -39,14 +39,11 @@ import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.filled.SportsMotorsports
 import androidx.compose.material.icons.filled.Translate
 import androidx.compose.material.icons.filled.WarningAmber
-import androidx.compose.material3.Button
-import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.minimumInteractiveComponentSize
@@ -71,12 +68,16 @@ import com.example.R
 import com.example.data.model.formatLapMs
 import com.example.engine.CardExporter
 import com.example.i18n.MxStrings
+import com.example.ui.components.AnimatedCheckeredRibbon
 import com.example.ui.components.CarbonStadiumBackdrop
 import com.example.ui.components.GlassRaceCard
+import com.example.ui.components.Mx3dButton
+import com.example.ui.components.Mx3dOutlinedButton
 import com.example.ui.components.PulsingLiveDot
 import com.example.ui.components.SurfaceBadge
 import com.example.ui.components.metallicShimmerSweep
 import com.example.ui.theme.LocalMxColors
+import com.example.ui.theme.contrastTextOn
 import com.example.ui.viewmodel.MxProViewModel
 import com.example.ui.viewmodel.MxUiState
 
@@ -151,11 +152,15 @@ fun HomeScreen(
                         Icon(
                             Icons.Default.AdminPanelSettings,
                             contentDescription = strings.directorAccess,
-                            tint = mx.subtleText,
+                            tint = mx.goldAccent,
                             modifier = Modifier.size(18.dp)
                         )
                         Spacer(Modifier.width(4.dp))
-                        Text(strings.directorAccess, color = mx.subtleText, style = MaterialTheme.typography.labelLarge)
+                        Text(
+                            strings.directorAccess,
+                            color = MaterialTheme.colorScheme.onBackground,
+                            style = MaterialTheme.typography.labelLarge
+                        )
                     }
 
                     TextButton(
@@ -167,11 +172,15 @@ fun HomeScreen(
                         Icon(
                             Icons.Default.CameraAlt,
                             contentDescription = strings.antennaAccess,
-                            tint = mx.subtleText,
+                            tint = mx.smBadge,
                             modifier = Modifier.size(18.dp)
                         )
                         Spacer(Modifier.width(4.dp))
-                        Text(strings.antennaAccess, color = mx.subtleText, style = MaterialTheme.typography.labelLarge)
+                        Text(
+                            strings.antennaAccess,
+                            color = MaterialTheme.colorScheme.onBackground,
+                            style = MaterialTheme.typography.labelLarge
+                        )
                     }
                 }
 
@@ -269,7 +278,13 @@ fun HomeScreen(
                 }
             }
 
-            Spacer(Modifier.height(12.dp))
+            Spacer(Modifier.height(6.dp))
+            AnimatedCheckeredRibbon(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .widthIn(max = 640.dp)
+            )
+            Spacer(Modifier.height(10.dp))
 
             // Active Circuit Selector & Timezone / GPS Protection
             GlassRaceCard(
@@ -356,14 +371,14 @@ fun HomeScreen(
                         Spacer(Modifier.height(8.dp))
                     }
 
-                    OutlinedButton(
+                    Mx3dOutlinedButton(
                         onClick = { showCreateCircuitDialog = true },
+                        borderColor = mx.smBadge,
                         modifier = Modifier
                             .fillMaxWidth()
-                            .minimumInteractiveComponentSize()
                             .testTag("create_local_circuit_button")
                     ) {
-                        Icon(Icons.Default.AddLocationAlt, contentDescription = null, modifier = Modifier.size(18.dp))
+                        Icon(Icons.Default.AddLocationAlt, contentDescription = null, modifier = Modifier.size(18.dp), tint = mx.smBadge)
                         Spacer(Modifier.width(6.dp))
                         Text(strings.createLocalCircuit)
                     }
@@ -451,13 +466,12 @@ fun HomeScreen(
                 }
 
                 if (state.isLiveActivityOnTrack) {
-                    Button(
+                    Mx3dButton(
                         onClick = onNavigateLiveFan,
-                        colors = ButtonDefaults.buttonColors(containerColor = mx.racingRed),
-                        shape = RoundedCornerShape(14.dp),
+                        containerColor = mx.racingRed,
+                        contentColor = Color.White,
                         modifier = Modifier
                             .fillMaxWidth()
-                            .minimumInteractiveComponentSize()
                             .testTag("live_flashing_banner_button")
                     ) {
                         PulsingLiveDot()
@@ -480,7 +494,7 @@ fun HomeScreen(
                     .widthIn(max = 640.dp),
                 verticalArrangement = Arrangement.spacedBy(10.dp)
             ) {
-                Button(
+                Mx3dButton(
                     onClick = {
                         if (state.currentRider != null) {
                             viewModel.enterTrackAsLoggedRider()
@@ -489,21 +503,16 @@ fun HomeScreen(
                             showAuthDialog = true
                         }
                     },
-                    colors = ButtonDefaults.buttonColors(
-                        containerColor = mx.goldAccent,
-                        contentColor = MaterialTheme.colorScheme.onPrimary
-                    ),
-                    shape = RoundedCornerShape(16.dp),
+                    containerColor = mx.goldAccent,
+                    contentColor = contrastTextOn(mx.goldAccent),
                     modifier = Modifier
                         .fillMaxWidth()
-                        .metallicShimmerSweep(enabled = !state.sunMode)
-                        .minimumInteractiveComponentSize()
                         .testTag("home_pilot_button")
                 ) {
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .padding(vertical = 8.dp),
+                            .padding(vertical = 6.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Icon(Icons.Default.SportsMotorsports, contentDescription = null, modifier = Modifier.size(30.dp))
@@ -573,19 +582,18 @@ fun HomeScreen(
                     .widthIn(max = 640.dp),
                 horizontalArrangement = Arrangement.spacedBy(8.dp)
             ) {
-                OutlinedButton(
+                Mx3dOutlinedButton(
                     onClick = { showGuideDialog = true },
                     modifier = Modifier
                         .weight(1f)
-                        .minimumInteractiveComponentSize()
                         .testTag("home_guide_button")
                 ) {
-                    Icon(Icons.Default.HelpOutline, contentDescription = null, modifier = Modifier.size(16.dp))
+                    Icon(Icons.Default.HelpOutline, contentDescription = null, modifier = Modifier.size(16.dp), tint = mx.goldAccent)
                     Spacer(Modifier.width(4.dp))
                     Text(strings.guideAndInstall, maxLines = 1)
                 }
 
-                OutlinedButton(
+                Mx3dOutlinedButton(
                     onClick = {
                         val msg = if (strings.isSpanish) {
                             "🏁 ¡Únete a Metropolitano MX Pro! Cronometraje RC 1/4 en vivo y setups Losi Promoto."
@@ -594,24 +602,24 @@ fun HomeScreen(
                         }
                         CardExporter.shareWhatsAppText(context, msg)
                     },
+                    borderColor = mx.telemetryGreen,
                     modifier = Modifier
                         .weight(1f)
-                        .minimumInteractiveComponentSize()
                         .testTag("home_whatsapp_invite_button")
                 ) {
-                    Icon(Icons.Default.Share, contentDescription = null, modifier = Modifier.size(16.dp))
+                    Icon(Icons.Default.Share, contentDescription = null, modifier = Modifier.size(16.dp), tint = mx.telemetryGreen)
                     Spacer(Modifier.width(4.dp))
                     Text(strings.inviteWhatsApp, maxLines = 1)
                 }
 
-                OutlinedButton(
+                Mx3dOutlinedButton(
                     onClick = { showReportDialog = true },
+                    borderColor = mx.racingRed,
                     modifier = Modifier
                         .weight(1f)
-                        .minimumInteractiveComponentSize()
                         .testTag("home_report_inbox_button")
                 ) {
-                    Icon(Icons.Default.BugReport, contentDescription = null, modifier = Modifier.size(16.dp))
+                    Icon(Icons.Default.BugReport, contentDescription = null, modifier = Modifier.size(16.dp), tint = mx.racingRed)
                     Spacer(Modifier.width(4.dp))
                     Text(strings.reportInbox, maxLines = 1)
                 }

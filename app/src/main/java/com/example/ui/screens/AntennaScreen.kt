@@ -3,6 +3,7 @@ package com.example.ui.screens
 import android.Manifest
 import android.content.pm.PackageManager
 import android.os.SystemClock
+import android.view.ViewGroup
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.camera.core.CameraSelector
@@ -34,18 +35,19 @@ import androidx.compose.material.icons.automirrored.filled.VolumeOff
 import androidx.compose.material.icons.automirrored.filled.VolumeUp
 import androidx.compose.material.icons.filled.CameraAlt
 import androidx.compose.material.icons.filled.SwapHoriz
-import androidx.compose.material3.Button
-import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
 import androidx.compose.material3.minimumInteractiveComponentSize
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -64,8 +66,6 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.compose.LocalLifecycleOwner
-import androidx.compose.runtime.mutableFloatStateOf
-import androidx.compose.runtime.mutableIntStateOf
 import com.example.data.model.AntennaConfig
 import com.example.data.model.AntennaStation
 import com.example.data.model.DetectionMode
@@ -75,8 +75,11 @@ import com.example.data.model.PassingDirection
 import com.example.engine.CameraFpsHelper
 import com.example.engine.VisionTimingEngine
 import com.example.i18n.MxStrings
+import com.example.ui.components.AnimatedCheckeredRibbon
 import com.example.ui.components.CarbonStadiumBackdrop
 import com.example.ui.components.GlassRaceCard
+import com.example.ui.components.Mx3dButton
+import com.example.ui.components.Mx3dOutlinedButton
 import com.example.ui.theme.LocalMxColors
 import com.example.ui.theme.contrastTextOn
 import com.example.ui.viewmodel.MxProViewModel
@@ -172,15 +175,21 @@ fun AntennaScreen(
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
                 Icon(Icons.Default.CameraAlt, contentDescription = null, tint = mx.goldAccent, modifier = Modifier.size(52.dp))
-                Spacer(Modifier.height(12.dp))
-                Text(strings.antennaChooseStation, style = MaterialTheme.typography.headlineLarge)
-                Spacer(Modifier.height(6.dp))
+                Spacer(Modifier.height(10.dp))
+                Text(
+                    strings.antennaChooseStation,
+                    style = MaterialTheme.typography.headlineLarge,
+                    color = MaterialTheme.colorScheme.onBackground
+                )
+                Spacer(Modifier.height(8.dp))
+                AnimatedCheckeredRibbon(modifier = Modifier.fillMaxWidth(0.7f))
+                Spacer(Modifier.height(10.dp))
                 Text(
                     "${strings.antennaRemoteHint}\n${state.activeCircuit.name}",
                     style = MaterialTheme.typography.bodyMedium,
                     color = mx.subtleText
                 )
-                Spacer(Modifier.height(22.dp))
+                Spacer(Modifier.height(20.dp))
 
                 val stations = listOf(
                     AntennaStation.ANTENA_1 to (if (strings.isSpanish) "Antena 1 (Meta Principal)" else "Antenna 1 (Main Finish)"),
@@ -188,27 +197,27 @@ fun AntennaScreen(
                     AntennaStation.ANTENA_TEMP to (if (strings.isSpanish) "Antena Temporal / Piloto" else "Temporary / Rider Antenna")
                 )
                 stations.forEach { (station, label) ->
-                    Button(
+                    Mx3dButton(
                         onClick = {
                             viewModel.selectAntennaStation(station)
                             stationChosen = true
                             if (!hasCameraPerm) camPermLauncher.launch(Manifest.permission.CAMERA)
                         },
-                        colors = ButtonDefaults.buttonColors(
-                            containerColor = mx.goldAccent,
-                            contentColor = contrastTextOn(mx.goldAccent)
-                        ),
+                        containerColor = mx.goldAccent,
+                        contentColor = contrastTextOn(mx.goldAccent),
                         modifier = Modifier
                             .fillMaxWidth()
-                            .padding(vertical = 6.dp)
-                            .minimumInteractiveComponentSize()
+                            .padding(vertical = 4.dp)
                             .testTag("select_${station.id}")
                     ) {
                         Text(label, style = MaterialTheme.typography.titleMedium)
                     }
                 }
-                Spacer(Modifier.height(14.dp))
-                OutlinedButton(onClick = onBack, modifier = Modifier.minimumInteractiveComponentSize()) {
+                Spacer(Modifier.height(12.dp))
+                Mx3dOutlinedButton(
+                    onClick = onBack,
+                    modifier = Modifier.fillMaxWidth(0.6f)
+                ) {
                     Text(if (strings.isSpanish) "Salir" else "Exit")
                 }
             }
@@ -216,31 +225,25 @@ fun AntennaScreen(
         return
     }
 
-    Box(modifier = Modifier.fillMaxSize().background(Color.Black)) {
-        if (hasCameraPerm) {
-            AndroidView(
-                factory = { ctx ->
-                    val previewView = PreviewView(ctx).apply {
-                        implementationMode = PreviewView.ImplementationMode.COMPATIBLE
-                    }
-                    val cameraProviderFuture = ProcessCameraProvider.getInstance(ctx)
-                    cameraProviderFuture.addListener({
-                        try {
-                            val cameraProvider = cameraProviderFuture.get()
-                            boundProvider = cameraProvider
-                            val previewBuilder = Preview.Builder()
-                            CameraFpsHelper.applyBestHighFpsRange(ctx, previewBuilder)
-                            val preview = previewBuilder.build().also {
-                                it.surfaceProvider = previewView.surfaceProvider
-                            }
-                            val analysisBuilder = ImageAnalysis.Builder()
-                                .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
-                            CameraFpsHelper.applyBestHighFpsRange(ctx, analysisBuilder)
-                            val analysis = analysisBuilder.build()
-                            analysis.setAnalyzer(analysisExecutor) { imageProxy ->
+    CompositionLocalProvider(LocalContentColor provides Color.White) {
+        Box(modifier = Modifier.fillMaxSize().background(Color.Black)) {
+            if (hasCameraPerm) {
+                AndroidView(
+                    factory = { ctx ->
+                        val previewView = PreviewView(ctx).apply {
+                            layoutParams = ViewGroup.LayoutParams(
+                                ViewGroup.LayoutParams.MATCH_PARENT,
+                                ViewGroup.LayoutParams.MATCH_PARENT
+                            )
+                            scaleType = PreviewView.ScaleType.FILL_CENTER
+                            implementationMode = PreviewView.ImplementationMode.PERFORMANCE
+                        }
+                        val cameraProviderFuture = ProcessCameraProvider.getInstance(ctx)
+                        cameraProviderFuture.addListener({
+                            val analyzerBlock = ImageAnalysis.Analyzer { imageProxy ->
                                 try {
                                     val nowMono = SystemClock.elapsedRealtime()
-                                    val sendSnap = (nowMono - lastSnapshotMonoMs.get()) > 1500L
+                                    val sendSnap = (nowMono - lastSnapshotMonoMs.get()) > 1200L
                                     val res = visionEngine.processFrame(
                                         image = imageProxy,
                                         config = latestConfig,
@@ -253,7 +256,11 @@ fun AntennaScreen(
                                         lastFpsEstimate = res.estimatedFps
                                         if (sendSnap && res.snapshotBase64.isNotBlank()) {
                                             lastSnapshotMonoMs.set(nowMono)
-                                            viewModel.pushAntennaLiveSnapshot(latestStation, res.snapshotBase64)
+                                            viewModel.pushAntennaLiveSnapshot(
+                                                latestStation,
+                                                res.snapshotBase64,
+                                                res.estimatedFps
+                                            )
                                         }
                                         if (res.triggered) {
                                             lastDetectedColors = res.detectedColors
@@ -266,63 +273,108 @@ fun AntennaScreen(
                                     imageProxy.close()
                                 }
                             }
-                            cameraProvider.unbindAll()
-                            cameraProvider.bindToLifecycle(
-                                lifecycleOwner,
-                                CameraSelector.DEFAULT_BACK_CAMERA,
-                                preview,
-                                analysis
-                            )
-                            cameraError = null
-                        } catch (e: Exception) {
-                            cameraError = e.localizedMessage ?: "Camera error"
-                        }
-                    }, ContextCompat.getMainExecutor(ctx))
-                    previewView
-                },
-                modifier = Modifier.fillMaxSize()
-            )
-            if (cameraError != null) {
-                Text(
-                    text = "Camera error: $cameraError",
-                    color = Color.White,
-                    modifier = Modifier
-                        .align(Alignment.Center)
-                        .background(Color.Red.copy(alpha = 0.8f), RoundedCornerShape(8.dp))
-                        .padding(12.dp)
+                            try {
+                                val cameraProvider = cameraProviderFuture.get()
+                                boundProvider = cameraProvider
+                                val previewBuilder = Preview.Builder()
+                                CameraFpsHelper.applyBestHighFpsRange(ctx, previewBuilder)
+                                val preview = previewBuilder.build().also {
+                                    it.surfaceProvider = previewView.surfaceProvider
+                                }
+                                val analysisBuilder = ImageAnalysis.Builder()
+                                    .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
+                                CameraFpsHelper.applyBestHighFpsRange(ctx, analysisBuilder)
+                                val analysis = analysisBuilder.build().also {
+                                    it.setAnalyzer(analysisExecutor, analyzerBlock)
+                                }
+                                cameraProvider.unbindAll()
+                                try {
+                                    cameraProvider.bindToLifecycle(
+                                        lifecycleOwner,
+                                        CameraSelector.DEFAULT_BACK_CAMERA,
+                                        preview,
+                                        analysis
+                                    )
+                                } catch (_: Exception) {
+                                    // Fallback without strict dual-stream FPS hint for older Camera2 HALs
+                                    val fallbackPreview = Preview.Builder().build().also {
+                                        it.surfaceProvider = previewView.surfaceProvider
+                                    }
+                                    val fallbackAnalysis = ImageAnalysis.Builder()
+                                        .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
+                                        .build().also {
+                                            it.setAnalyzer(analysisExecutor, analyzerBlock)
+                                        }
+                                    cameraProvider.unbindAll()
+                                    cameraProvider.bindToLifecycle(
+                                        lifecycleOwner,
+                                        CameraSelector.DEFAULT_BACK_CAMERA,
+                                        fallbackPreview,
+                                        fallbackAnalysis
+                                    )
+                                }
+                                cameraError = null
+                            } catch (e: Exception) {
+                                cameraError = e.localizedMessage ?: "Camera error"
+                            }
+                        }, ContextCompat.getMainExecutor(ctx))
+                        previewView
+                    },
+                    modifier = Modifier.fillMaxSize()
                 )
-            }
-        } else {
-            Column(
-                modifier = Modifier.align(Alignment.Center).padding(24.dp),
-                horizontalAlignment = Alignment.CenterHorizontally
-            ) {
-                Text(
-                    if (strings.isSpanish) "Se requiere permiso de cámara para la Antena" else "Camera permission required for Antenna",
-                    color = Color.White
-                )
-                Spacer(Modifier.height(10.dp))
-                Button(onClick = { camPermLauncher.launch(Manifest.permission.CAMERA) }) {
-                    Text(if (strings.isSpanish) "Conceder Cámara" else "Grant Camera")
+                if (cameraError != null) {
+                    Text(
+                        text = "Camera error: $cameraError",
+                        color = Color.White,
+                        modifier = Modifier
+                            .align(Alignment.Center)
+                            .background(Color.Red.copy(alpha = 0.85f), RoundedCornerShape(10.dp))
+                            .padding(14.dp)
+                    )
+                }
+            } else {
+                Column(
+                    modifier = Modifier.align(Alignment.Center).padding(24.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally
+                ) {
+                    Text(
+                        if (strings.isSpanish) "Se requiere permiso de cámara para la Antena" else "Camera permission required for Antenna",
+                        color = Color.White,
+                        style = MaterialTheme.typography.titleMedium
+                    )
+                    Spacer(Modifier.height(12.dp))
+                    Mx3dButton(
+                        onClick = { camPermLauncher.launch(Manifest.permission.CAMERA) },
+                        containerColor = mx.goldAccent,
+                        contentColor = contrastTextOn(mx.goldAccent)
+                    ) {
+                        Text(if (strings.isSpanish) "Conceder Cámara" else "Grant Camera")
+                    }
                 }
             }
-        }
 
-        // Translucent ROI "Efecto Túnel" + Trigger Line Overlay (100% remotely configured by Director)
-        Canvas(modifier = Modifier.fillMaxSize()) {
-            val roiW = size.width * activeConfig.roiSize.widthFrac
-            val roiH = size.height * activeConfig.roiSize.heightFrac
-            val roiLeft = (size.width - roiW) / 2f
-            val roiTop = (size.height * activeConfig.roiHeight.centerYFrac - roiH / 2f).coerceIn(0f, size.height - roiH)
+            // Translucent ROI "Efecto Túnel" + Trigger Line Overlay (bright inside tunnel!)
+            Canvas(modifier = Modifier.fillMaxSize()) {
+                val roiW = size.width * activeConfig.roiSize.widthFrac
+                val roiH = size.height * activeConfig.roiSize.heightFrac
+                val roiLeft = (size.width - roiW) / 2f
+                val roiTop = (size.height * activeConfig.roiHeight.centerYFrac - roiH / 2f).coerceIn(0f, size.height - roiH)
+                val roiRight = roiLeft + roiW
+                val roiBottom = roiTop + roiH
+                val dim = Color.Black.copy(alpha = 0.24f)
 
-            // Dim outside tunnel
-            drawRect(Color.Black.copy(alpha = 0.42f))
-            drawRect(
-                color = if (localCalibrated) Color(0xFF22C55E) else Color(0xFFF5B731),
-                topLeft = Offset(roiLeft, roiTop),
-                size = Size(roiW, roiH),
-                style = Stroke(width = 4.dp.toPx())
-            )
+                // Dim ONLY outside the tunnel so the pass zone stays crystal clear
+                drawRect(dim, topLeft = Offset.Zero, size = Size(size.width, roiTop))
+                drawRect(dim, topLeft = Offset(0f, roiBottom), size = Size(size.width, (size.height - roiBottom).coerceAtLeast(0f)))
+                drawRect(dim, topLeft = Offset(0f, roiTop), size = Size(roiLeft, roiH))
+                drawRect(dim, topLeft = Offset(roiRight, roiTop), size = Size((size.width - roiRight).coerceAtLeast(0f), roiH))
+
+                drawRect(
+                    color = if (localCalibrated) Color(0xFF22C55E) else Color(0xFFF5B731),
+                    topLeft = Offset(roiLeft, roiTop),
+                    size = Size(roiW, roiH),
+                    style = Stroke(width = 4.dp.toPx())
+                )
 
             // Trigger Line
             if (activeConfig.lineOrientation == LineOrientation.VERTICAL) {
@@ -443,11 +495,16 @@ fun AntennaScreen(
                                     .border(1.dp, Color.White, CircleShape)
                             )
                             Spacer(Modifier.width(4.dp))
-                            Text(sample.colorName, style = MaterialTheme.typography.labelMedium)
+                            Text(
+                                sample.colorName,
+                                style = MaterialTheme.typography.labelMedium,
+                                color = MaterialTheme.colorScheme.onSurface
+                            )
                         }
                     }
                 }
             }
         }
+    }
     }
 }

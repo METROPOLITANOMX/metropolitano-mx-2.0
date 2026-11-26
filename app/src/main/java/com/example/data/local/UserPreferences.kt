@@ -16,7 +16,7 @@ data class StoredPrefs(
     val activeCircuitId: String = "metropolitano_madrid",
     val rememberedRiderName: String = "",
     val rememberedPassword: String = "",
-    val rememberMe: Boolean = false,
+    val rememberMe: Boolean = true,
     val loggedInRiderId: String = "",
     val deviceId: String = "",
     val languageOverride: String? = null
@@ -41,7 +41,7 @@ class UserPreferences(private val context: Context) {
             activeCircuitId = prefs[Keys.ACTIVE_CIRCUIT_ID] ?: "metropolitano_madrid",
             rememberedRiderName = prefs[Keys.REMEMBERED_NAME] ?: "",
             rememberedPassword = prefs[Keys.REMEMBERED_PASS] ?: "",
-            rememberMe = prefs[Keys.REMEMBER_ME] ?: false,
+            rememberMe = prefs[Keys.REMEMBER_ME] ?: true,
             loggedInRiderId = prefs[Keys.LOGGED_RIDER_ID] ?: "",
             deviceId = prefs[Keys.DEVICE_ID] ?: "",
             languageOverride = prefs[Keys.LANG_OVERRIDE]?.takeIf { it.isNotBlank() }

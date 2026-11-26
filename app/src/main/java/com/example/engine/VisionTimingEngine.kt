@@ -106,7 +106,7 @@ class VisionTimingEngine {
         lastFrameMonoMs = nowMono
         val currentFps = (1000f / emaFrameIntervalMs).toInt().coerceIn(5, 120)
 
-        val rgbBitmap = imageProxyToScaledBitmap(image, targetW = 160, targetH = 120) ?: return null
+        val rgbBitmap = imageProxyToScaledBitmap(image, maxDim = 240) ?: return null
         val w = rgbBitmap.width
         val h = rgbBitmap.height
         val pixels = IntArray(w * h)
@@ -121,7 +121,7 @@ class VisionTimingEngine {
                 baseH = h
                 calibrationPending = false
             }
-            val snap = if (captureLiveSnapshot) encodeBitmapBase64(rgbBitmap, 52) else ""
+            val snap = if (captureLiveSnapshot) encodeBitmapBase64(rgbBitmap, 55) else ""
             return VisionDetectionResult(
                 triggered = false,
                 triggerTimestampMs = 0L,
@@ -328,7 +328,7 @@ class VisionTimingEngine {
             val exactCrossingMs = syncedNowMs - subFrameOffsetMs
 
             // Extract HD Photo-Finish & run fast local ML Kit dorsal OCR ONLY on trigger
-            val hdBitmap = imageProxyToScaledBitmap(image, targetW = 360, targetH = 270) ?: rgbBitmap
+            val hdBitmap = imageProxyToScaledBitmap(image, maxDim = 420) ?: rgbBitmap
             val dorsalDetected = extractDorsalOnDevice(hdBitmap)
             val hdPhotoFinishB64 = encodeBitmapBase64(hdBitmap, 74)
 
@@ -374,7 +374,7 @@ class VisionTimingEngine {
         }
 
         prevOccupancy = occupancy
-        val snap = if (captureLiveSnapshot) encodeBitmapBase64(rgbBitmap, 48) else ""
+        val snap = if (captureLiveSnapshot) encodeBitmapBase64(rgbBitmap, 55) else ""
         return VisionDetectionResult(
             triggered = false,
             triggerTimestampMs = 0L,
@@ -543,7 +543,7 @@ class VisionTimingEngine {
         }
     }
 
-    private fun imageProxyToScaledBitmap(image: ImageProxy, targetW: Int, targetH: Int): Bitmap? {
+    private fun imageProxyToScaledBitmap(image: ImageProxy, maxDim: Int): Bitmap? {
         return try {
             val yPlane = image.planes[0]
             val uPlane = image.planes[1]
@@ -554,7 +554,12 @@ class VisionTimingEngine {
 
             val srcW = image.width
             val srcH = image.height
-            val out = Bitmap.createBitmap(targetW, targetH, Bitmap.Config.ARGB_8888)
+            if (srcW <= 0 || srcH <= 0) return null
+            val scale = maxDim.toFloat() / maxOf(srcW, srcH).toFloat()
+            val targetW = (srcW * scale).toInt().coerceAtLeast(32)
+            val targetH = (srcH * scale).toInt().coerceAtLeast(32)
+
+            val rawBmp = Bitmap.createBitmap(targetW, targetH, Bitmap.Config.ARGB_8888)
             val row = IntArray(targetW)
 
             for (ty in 0 until targetH) {
@@ -576,9 +581,18 @@ class VisionTimingEngine {
                     val b = (yVal + 1.732446f * uVal).toInt().coerceIn(0, 255)
                     row[tx] = Color.rgb(r, g, b)
                 }
-                out.setPixels(row, 0, targetW, 0, ty, targetW, 1)
+                rawBmp.setPixels(row, 0, targetW, 0, ty, targetW, 1)
             }
-            out
+
+            val rot = image.imageInfo.rotationDegrees
+            if (rot != 0) {
+                val matrix = android.graphics.Matrix().apply { postRotate(rot.toFloat()) }
+                val rotated = Bitmap.createBitmap(rawBmp, 0, 0, rawBmp.width, rawBmp.height, matrix, true)
+                rawBmp.recycle()
+                rotated
+            } else {
+                rawBmp
+            }
         } catch (_: Exception) {
             null
         }

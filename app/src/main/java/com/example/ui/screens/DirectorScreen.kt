@@ -36,9 +36,8 @@ import androidx.compose.material.icons.filled.GpsFixed
 import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Stop
-import androidx.compose.material3.Button
-import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Checkbox
+import androidx.compose.material3.CheckboxDefaults
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -47,6 +46,7 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.ScrollableTabRow
 import androidx.compose.material3.Slider
+import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.Tab
 import androidx.compose.material3.Text
 import androidx.compose.material3.minimumInteractiveComponentSize
@@ -87,16 +87,21 @@ import com.example.data.model.RoiSize
 import com.example.data.model.SessionPhase
 import com.example.data.model.formatLapMs
 import com.example.i18n.MxStrings
+import com.example.ui.components.AnimatedCheckeredRibbon
 import com.example.ui.components.Base64ImageView
 import com.example.ui.components.CarbonStadiumBackdrop
 import com.example.ui.components.FlagAndRecordFrameOverlay
 import com.example.ui.components.GlassRaceCard
+import com.example.ui.components.Mx3dButton
+import com.example.ui.components.Mx3dOutlinedButton
 import com.example.ui.components.MxTopHeader
 import com.example.ui.components.PulsingLiveDot
 import com.example.ui.components.RiderDorsalBadge
 import com.example.ui.components.SupercrossStartGateCard
 import com.example.ui.theme.LocalMxColors
 import com.example.ui.theme.contrastTextOn
+import com.example.ui.theme.mxChipColors
+import com.example.ui.theme.mxTextFieldColors
 import com.example.ui.viewmodel.MxProViewModel
 import com.example.ui.viewmodel.MxUiState
 import kotlinx.coroutines.delay
@@ -120,7 +125,7 @@ fun DirectorScreen(
 
     var liveNowMs by remember { mutableLongStateOf(viewModel.syncedNowMs()) }
     LaunchedEffect(Unit) {
-        viewModel.loadAdminReports()
+        viewModel.refreshDirectorDashboard()
         while (true) {
             liveNowMs = viewModel.syncedNowMs()
             delay(100L)
@@ -369,15 +374,20 @@ fun DirectorScreen(
                                     }
                                 }
 
-                                ScrollableTabRow(selectedTabIndex = selectedTab, edgePadding = 4.dp) {
-                                    Tab(selected = selectedTab == 0, onClick = { selectedTab = 0 }, text = { Text(strings.roomAndHeats) })
-                                    Tab(selected = selectedTab == 1, onClick = { selectedTab = 1 }, text = { Text(strings.antennaMonitor) })
-                                    Tab(selected = selectedTab == 2, onClick = { selectedTab = 2 }, text = { Text(strings.colorWarmup) })
-                                    Tab(selected = selectedTab == 3, onClick = { selectedTab = 3 }, text = { Text(strings.setupWizard) })
-                                    Tab(selected = selectedTab == 4, onClick = { selectedTab = 4 }, text = { Text(strings.clubAdmin) })
+                                ScrollableTabRow(
+                                    selectedTabIndex = selectedTab,
+                                    edgePadding = 4.dp,
+                                    containerColor = MaterialTheme.colorScheme.surface,
+                                    contentColor = mx.goldAccent
+                                ) {
+                                    Tab(selected = selectedTab == 0, onClick = { selectedTab = 0 }, selectedContentColor = mx.goldAccent, unselectedContentColor = MaterialTheme.colorScheme.onSurface, text = { Text(strings.roomAndHeats) })
+                                    Tab(selected = selectedTab == 1, onClick = { selectedTab = 1 }, selectedContentColor = mx.goldAccent, unselectedContentColor = MaterialTheme.colorScheme.onSurface, text = { Text(strings.antennaMonitor) })
+                                    Tab(selected = selectedTab == 2, onClick = { selectedTab = 2 }, selectedContentColor = mx.goldAccent, unselectedContentColor = MaterialTheme.colorScheme.onSurface, text = { Text(strings.colorWarmup) })
+                                    Tab(selected = selectedTab == 3, onClick = { selectedTab = 3 }, selectedContentColor = mx.goldAccent, unselectedContentColor = MaterialTheme.colorScheme.onSurface, text = { Text(strings.setupWizard) })
+                                    Tab(selected = selectedTab == 4, onClick = { selectedTab = 4 }, selectedContentColor = mx.goldAccent, unselectedContentColor = MaterialTheme.colorScheme.onSurface, text = { Text(strings.clubAdmin) })
                                 }
                                 when (selectedTab) {
-                                    0 -> DirectorRoomControlTab(state, strings, viewModel, liveNowMs)
+                                    0 -> DirectorRoomControlTab(state, strings, viewModel, liveNowMs, showInlineCamera = false, selectedAntennaId = selectedAntennaId, onSelectAntenna = { selectedAntennaId = it })
                                     1 -> DirectorAntennaMonitorTab(state, strings, viewModel, liveNowMs, selectedAntennaId) { selectedAntennaId = it }
                                     2 -> DirectorColorWarmupTab(state, strings, viewModel, liveNowMs)
                                     3 -> DirectorSetupWizardTab(strings)
@@ -387,15 +397,20 @@ fun DirectorScreen(
                         }
                     } else {
                         Column(modifier = Modifier.fillMaxSize()) {
-                            ScrollableTabRow(selectedTabIndex = selectedTab, edgePadding = 8.dp) {
-                                Tab(selected = selectedTab == 0, onClick = { selectedTab = 0 }, text = { Text(strings.roomAndHeats) })
-                                Tab(selected = selectedTab == 1, onClick = { selectedTab = 1 }, text = { Text(strings.antennaMonitor) })
-                                Tab(selected = selectedTab == 2, onClick = { selectedTab = 2 }, text = { Text(strings.colorWarmup) })
-                                Tab(selected = selectedTab == 3, onClick = { selectedTab = 3 }, text = { Text(strings.setupWizard) })
-                                Tab(selected = selectedTab == 4, onClick = { selectedTab = 4 }, text = { Text(strings.clubAdmin) })
+                            ScrollableTabRow(
+                                selectedTabIndex = selectedTab,
+                                edgePadding = 8.dp,
+                                containerColor = MaterialTheme.colorScheme.surface,
+                                contentColor = mx.goldAccent
+                            ) {
+                                Tab(selected = selectedTab == 0, onClick = { selectedTab = 0 }, selectedContentColor = mx.goldAccent, unselectedContentColor = MaterialTheme.colorScheme.onSurface, text = { Text(strings.roomAndHeats) })
+                                Tab(selected = selectedTab == 1, onClick = { selectedTab = 1 }, selectedContentColor = mx.goldAccent, unselectedContentColor = MaterialTheme.colorScheme.onSurface, text = { Text(strings.antennaMonitor) })
+                                Tab(selected = selectedTab == 2, onClick = { selectedTab = 2 }, selectedContentColor = mx.goldAccent, unselectedContentColor = MaterialTheme.colorScheme.onSurface, text = { Text(strings.colorWarmup) })
+                                Tab(selected = selectedTab == 3, onClick = { selectedTab = 3 }, selectedContentColor = mx.goldAccent, unselectedContentColor = MaterialTheme.colorScheme.onSurface, text = { Text(strings.setupWizard) })
+                                Tab(selected = selectedTab == 4, onClick = { selectedTab = 4 }, selectedContentColor = mx.goldAccent, unselectedContentColor = MaterialTheme.colorScheme.onSurface, text = { Text(strings.clubAdmin) })
                             }
                             when (selectedTab) {
-                                0 -> DirectorRoomControlTab(state, strings, viewModel, liveNowMs)
+                                0 -> DirectorRoomControlTab(state, strings, viewModel, liveNowMs, showInlineCamera = true, selectedAntennaId = selectedAntennaId, onSelectAntenna = { selectedAntennaId = it })
                                 1 -> DirectorAntennaMonitorTab(state, strings, viewModel, liveNowMs, selectedAntennaId) { selectedAntennaId = it }
                                 2 -> DirectorColorWarmupTab(state, strings, viewModel, liveNowMs)
                                 3 -> DirectorSetupWizardTab(strings)
@@ -420,7 +435,10 @@ private fun DirectorRoomControlTab(
     state: MxUiState,
     strings: MxStrings,
     viewModel: MxProViewModel,
-    liveNowMs: Long
+    liveNowMs: Long,
+    showInlineCamera: Boolean,
+    selectedAntennaId: String,
+    onSelectAntenna: (String) -> Unit
 ) {
     val mx = LocalMxColors.current
     val room = state.roomState
@@ -432,6 +450,17 @@ private fun DirectorRoomControlTab(
             .padding(16.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
+        if (showInlineCamera) {
+            DirectorAntennaCameraPreviewCard(
+                state = state,
+                strings = strings,
+                viewModel = viewModel,
+                selectedAntennaId = selectedAntennaId,
+                onSelectAntenna = onSelectAntenna,
+                liveNowMs = liveNowMs
+            )
+            AnimatedCheckeredRibbon()
+        }
         SupercrossStartGateCard(
             sessionPhase = room.sessionPhase,
             phaseEndTimeMs = room.phaseEndTimeMs,
@@ -474,15 +503,12 @@ private fun DirectorRoomControlTab(
                             )
                         }
                     }
-                    Button(
+                    Mx3dButton(
                         onClick = { viewModel.stopSession() },
-                        colors = ButtonDefaults.buttonColors(
-                            containerColor = mx.racingRed,
-                            contentColor = Color.White
-                        ),
+                        containerColor = mx.racingRed,
+                        contentColor = Color.White,
                         modifier = Modifier
                             .fillMaxWidth()
-                            .minimumInteractiveComponentSize()
                             .testTag("director_stop_session_btn")
                     ) {
                         Icon(Icons.Default.Stop, contentDescription = null)
@@ -508,7 +534,8 @@ private fun DirectorRoomControlTab(
                         FilterChip(
                             selected = room.gameMode == gm,
                             onClick = { viewModel.updateRoomSettings(gameMode = gm) },
-                            label = { Text(gm.name.replace("_", " ")) }
+                            label = { Text(gm.name.replace("_", " ")) },
+                            colors = mxChipColors()
                         )
                     }
                 }
@@ -519,7 +546,8 @@ private fun DirectorRoomControlTab(
                         FilterChip(
                             selected = room.heatDurationSec == sec,
                             onClick = { viewModel.updateRoomSettings(heatDurationSec = sec) },
-                            label = { Text("${sec / 60}m") }
+                            label = { Text("${sec / 60}m") },
+                            colors = mxChipColors()
                         )
                     }
                 }
@@ -530,7 +558,8 @@ private fun DirectorRoomControlTab(
                         FilterChip(
                             selected = room.antiVibration == lvl,
                             onClick = { viewModel.updateRoomSettings(antiVibration = lvl) },
-                            label = { Text(lvl.name) }
+                            label = { Text(lvl.name) },
+                            colors = mxChipColors()
                         )
                     }
                 }
@@ -538,58 +567,58 @@ private fun DirectorRoomControlTab(
         }
 
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
-            Button(
+            Mx3dButton(
                 onClick = { viewModel.startWarmup(friendly = false) },
-                colors = ButtonDefaults.buttonColors(
-                    containerColor = mx.goldAccent,
-                    contentColor = contrastTextOn(mx.goldAccent)
-                ),
-                modifier = Modifier.weight(1f).minimumInteractiveComponentSize().testTag("director_warmup_btn")
-            ) { Text(strings.startWarmup) }
-            Button(
+                containerColor = mx.goldAccent,
+                contentColor = contrastTextOn(mx.goldAccent),
+                modifier = Modifier.weight(1f).testTag("director_warmup_btn")
+            ) { Text(strings.startWarmup, maxLines = 1) }
+            Mx3dButton(
                 onClick = { viewModel.start30sCountdown(friendly = false) },
-                colors = ButtonDefaults.buttonColors(
-                    containerColor = mx.racingRed,
-                    contentColor = Color.White
-                ),
-                modifier = Modifier.weight(1f).minimumInteractiveComponentSize().testTag("director_30s_gate_btn")
-            ) { Text(strings.startLight30s) }
+                containerColor = mx.racingRed,
+                contentColor = Color.White,
+                modifier = Modifier.weight(1f).testTag("director_30s_gate_btn")
+            ) { Text(strings.startLight30s, maxLines = 1) }
         }
 
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
-            OutlinedButton(
+            Mx3dOutlinedButton(
                 onClick = { viewModel.startRandomMxGate(friendly = false) },
-                modifier = Modifier.weight(1f).minimumInteractiveComponentSize()
-            ) { Text(strings.randomGate) }
-            OutlinedButton(
+                borderColor = mx.smBadge,
+                modifier = Modifier.weight(1f)
+            ) { Text(strings.randomGate, maxLines = 1) }
+            Mx3dOutlinedButton(
                 onClick = {
                     val next = if (room.flagState == FlagState.GREEN) FlagState.YELLOW else FlagState.GREEN
                     viewModel.updateRoomSettings(flagState = next)
                 },
-                modifier = Modifier.weight(1f).minimumInteractiveComponentSize()
+                borderColor = if (room.flagState == FlagState.YELLOW) mx.telemetryGreen else mx.goldBright,
+                modifier = Modifier.weight(1f)
             ) {
                 Icon(Icons.Default.Flag, contentDescription = null, tint = if (room.flagState == FlagState.YELLOW) mx.goldBright else mx.telemetryGreen)
                 Spacer(Modifier.width(4.dp))
-                Text(if (room.flagState == FlagState.YELLOW) "Green Flag" else "Yellow Flag")
+                Text(if (room.flagState == FlagState.YELLOW) "Green Flag" else "Yellow Flag", maxLines = 1)
             }
         }
 
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
-            OutlinedButton(
+            Mx3dOutlinedButton(
                 onClick = { viewModel.lockActiveCircuitGpsHere() },
-                modifier = Modifier.weight(1f).minimumInteractiveComponentSize()
+                borderColor = mx.goldAccent,
+                modifier = Modifier.weight(1f)
             ) {
-                Icon(Icons.Default.GpsFixed, contentDescription = null, modifier = Modifier.size(16.dp))
+                Icon(Icons.Default.GpsFixed, contentDescription = null, modifier = Modifier.size(16.dp), tint = mx.goldAccent)
                 Spacer(Modifier.width(4.dp))
-                Text(if (strings.isSpanish) "Fijar GPS Circuito" else "Lock Track GPS")
+                Text(if (strings.isSpanish) "Fijar GPS Circuito" else "Lock Track GPS", maxLines = 1)
             }
-            OutlinedButton(
+            Mx3dOutlinedButton(
                 onClick = { viewModel.resetHeat() },
-                modifier = Modifier.weight(1f).minimumInteractiveComponentSize()
+                borderColor = mx.racingRed,
+                modifier = Modifier.weight(1f)
             ) {
-                Icon(Icons.Default.Refresh, contentDescription = null, modifier = Modifier.size(16.dp))
+                Icon(Icons.Default.Refresh, contentDescription = null, modifier = Modifier.size(16.dp), tint = mx.racingRed)
                 Spacer(Modifier.width(4.dp))
-                Text(if (strings.isSpanish) "Reiniciar Manga" else "Reset Heat")
+                Text(if (strings.isSpanish) "Reiniciar Manga" else "Reset Heat", maxLines = 1)
             }
         }
 
@@ -614,19 +643,18 @@ private fun DirectorRoomControlTab(
                             FilterChip(
                                 selected = ch.id == state.activeChampionshipId,
                                 onClick = { viewModel.selectActiveChampionship(ch.id) },
-                                label = { Text("${ch.name} (${ch.completedHeats}/${ch.totalHeats})") }
+                                label = { Text("${ch.name} (${ch.completedHeats}/${ch.totalHeats})") },
+                                colors = mxChipColors()
                             )
                         }
                     }
                 }
                 if (activeChamp != null) {
-                    Button(
+                    Mx3dButton(
                         onClick = { viewModel.awardChampionshipHeatPoints() },
-                        colors = ButtonDefaults.buttonColors(
-                            containerColor = mx.telemetryGreen,
-                            contentColor = contrastTextOn(mx.telemetryGreen)
-                        ),
-                        modifier = Modifier.fillMaxWidth().minimumInteractiveComponentSize().testTag("director_award_champ_points")
+                        containerColor = mx.telemetryGreen,
+                        contentColor = contrastTextOn(mx.telemetryGreen),
+                        modifier = Modifier.fillMaxWidth().testTag("director_award_champ_points")
                     ) {
                         Text(
                             if (strings.isSpanish) "Cerrar Manga y Sumar Puntos a '${activeChamp.name}'"
@@ -639,7 +667,8 @@ private fun DirectorRoomControlTab(
                         .forEachIndexed { idx, st ->
                             Text(
                                 "${idx + 1}. ${st.riderName} #${st.dorsal} — ${st.points} pts (${st.heatsRaced}M)",
-                                style = MaterialTheme.typography.labelMedium
+                                style = MaterialTheme.typography.labelMedium,
+                                color = MaterialTheme.colorScheme.onSurface
                             )
                         }
                 }
@@ -649,20 +678,22 @@ private fun DirectorRoomControlTab(
                         onValueChange = { newChampName = it },
                         label = { Text(if (strings.isSpanish) "Nuevo Campeonato" else "New Championship") },
                         singleLine = true,
+                        colors = mxTextFieldColors(),
                         modifier = Modifier.weight(1f)
                     )
                     FilterChip(
                         selected = true,
                         onClick = { newChampHeats = if (newChampHeats >= 6) 2 else newChampHeats + 1 },
-                        label = { Text("${newChampHeats}M") }
+                        label = { Text("${newChampHeats}M") },
+                        colors = mxChipColors()
                     )
                 }
-                OutlinedButton(
+                Mx3dOutlinedButton(
                     onClick = {
                         viewModel.createChampionship(newChampName, newChampHeats)
                         newChampName = ""
                     },
-                    modifier = Modifier.fillMaxWidth().minimumInteractiveComponentSize()
+                    modifier = Modifier.fillMaxWidth()
                 ) {
                     Text(if (strings.isSpanish) "Crear Campeonato" else "Create Championship")
                 }
@@ -708,17 +739,20 @@ private fun DirectorAntennaCameraPreviewCard(
             FilterChip(
                 selected = selectedAntennaId == AntennaStation.ANTENA_1.id,
                 onClick = { onSelectAntenna(AntennaStation.ANTENA_1.id) },
-                label = { Text("A1 ${if (ant1Online) "●" else "○"}") }
+                label = { Text("A1 ${if (ant1Online) "●" else "○"}") },
+                colors = mxChipColors()
             )
             FilterChip(
                 selected = selectedAntennaId == AntennaStation.ANTENA_2.id,
                 onClick = { onSelectAntenna(AntennaStation.ANTENA_2.id) },
-                label = { Text("A2 ${if (ant2Online) "●" else "○"}") }
+                label = { Text("A2 ${if (ant2Online) "●" else "○"}") },
+                colors = mxChipColors()
             )
             FilterChip(
                 selected = selectedAntennaId == AntennaStation.ANTENA_TEMP.id,
                 onClick = { onSelectAntenna(AntennaStation.ANTENA_TEMP.id) },
-                label = { Text("Temp ${if (tempOnline) "●" else "○"}") }
+                label = { Text("Temp ${if (tempOnline) "●" else "○"}") },
+                colors = mxChipColors()
             )
         }
 
@@ -736,9 +770,13 @@ private fun DirectorAntennaCameraPreviewCard(
                         style = MaterialTheme.typography.titleMedium,
                         color = mx.goldAccent
                     )
+                    val secAgo = if (cfg.lastHeartbeatMs > 0L) ((liveNowMs - cfg.lastHeartbeatMs) / 1000L).coerceAtLeast(0L) else -1L
                     Text(
-                        text = if (selectedOnline) (if (strings.isSpanish) "CONECTADA" else "ONLINE")
-                        else (if (strings.isSpanish) "SIN SEÑAL" else "OFFLINE"),
+                        text = if (selectedOnline) {
+                            if (strings.isSpanish) "CONECTADA (${secAgo}s)" else "ONLINE (${secAgo}s)"
+                        } else {
+                            if (strings.isSpanish) "SIN SEÑAL" else "OFFLINE"
+                        },
                         style = MaterialTheme.typography.labelSmall,
                         color = if (selectedOnline) mx.telemetryGreen else mx.racingRed,
                         fontWeight = FontWeight.Bold
@@ -790,18 +828,16 @@ private fun DirectorAntennaCameraPreviewCard(
                 }
 
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
-                    Button(
+                    Mx3dButton(
                         onClick = { viewModel.triggerRemoteCalibration(selectedAntennaId) },
-                        colors = ButtonDefaults.buttonColors(
-                            containerColor = mx.telemetryGreen,
-                            contentColor = contrastTextOn(mx.telemetryGreen)
-                        ),
-                        modifier = Modifier.weight(1f).minimumInteractiveComponentSize().testTag("director_calibrate_antenna_btn")
+                        containerColor = mx.telemetryGreen,
+                        contentColor = contrastTextOn(mx.telemetryGreen),
+                        modifier = Modifier.weight(1f).testTag("director_calibrate_antenna_btn")
                     ) {
                         Text(strings.calibrateEmptyTrack, maxLines = 1)
                     }
                     val auditPhoto = cfg.lastPhotoFinishBase64.ifBlank { cfg.lastSnapshotBase64 }
-                    OutlinedButton(
+                    Mx3dOutlinedButton(
                         enabled = auditPhoto.isNotBlank() && !state.aiStewardBusy,
                         onClick = {
                             viewModel.inspectPhotoWithAiSteward(
@@ -811,14 +847,16 @@ private fun DirectorAntennaCameraPreviewCard(
                                 autoAssignWarmupSample = true
                             )
                         },
-                        modifier = Modifier.minimumInteractiveComponentSize().testTag("director_ai_audit_photo")
+                        borderColor = mx.hotlapPurple,
+                        modifier = Modifier.weight(0.75f).testTag("director_ai_audit_photo")
                     ) {
                         Text(
                             when {
                                 state.aiStewardBusy -> "IA..."
                                 strings.isSpanish -> "Comisario IA"
                                 else -> "AI Steward"
-                            }
+                            },
+                            maxLines = 1
                         )
                     }
                 }
@@ -875,41 +913,50 @@ private fun DirectorAntennaMonitorTab(
         GlassRaceCard {
             Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
 
-                Text(if (strings.isSpanish) "Modo de Detección" else "Detection Mode", style = MaterialTheme.typography.labelLarge)
+                Text(
+                    if (strings.isSpanish) "Modo de Detección" else "Detection Mode",
+                    style = MaterialTheme.typography.labelLarge,
+                    color = mx.goldAccent
+                )
                 LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     item {
                         FilterChip(
                             selected = cfg.detectionMode == DetectionMode.ANY_PASS,
                             onClick = { viewModel.updateRemoteAntennaConfig(selectedAntennaId, detectionMode = DetectionMode.ANY_PASS) },
-                            label = { Text(if (strings.isSpanish) "Cualquier Paso" else "Any Pass") }
+                            label = { Text(if (strings.isSpanish) "Cualquier Paso" else "Any Pass") },
+                            colors = mxChipColors()
                         )
                     }
                     item {
                         FilterChip(
                             selected = cfg.detectionMode == DetectionMode.FAIRING_COLOR,
                             onClick = { viewModel.updateRemoteAntennaConfig(selectedAntennaId, detectionMode = DetectionMode.FAIRING_COLOR) },
-                            label = { Text(if (strings.isSpanish) "Multi-Color CIE" else "Multi-Color") }
+                            label = { Text(if (strings.isSpanish) "Multi-Color CIE" else "Multi-Color") },
+                            colors = mxChipColors()
                         )
                     }
                     item {
                         FilterChip(
                             selected = cfg.detectionMode == DetectionMode.SINGLE_COLOR,
                             onClick = { viewModel.updateRemoteAntennaConfig(selectedAntennaId, detectionMode = DetectionMode.SINGLE_COLOR) },
-                            label = { Text(if (strings.isSpanish) "Solo 1 Color" else "Single Color") }
+                            label = { Text(if (strings.isSpanish) "Solo 1 Color" else "Single Color") },
+                            colors = mxChipColors()
                         )
                     }
                 }
 
                 Text(
                     if (strings.isSpanish) "Sentido de Paso + Comisario IA Gemini" else "Passing Direction + Gemini AI Steward",
-                    style = MaterialTheme.typography.labelLarge
+                    style = MaterialTheme.typography.labelLarge,
+                    color = mx.goldAccent
                 )
                 LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     item {
                         FilterChip(
                             selected = cfg.aiStewardEnabled,
                             onClick = { viewModel.updateRemoteAntennaConfig(selectedAntennaId, aiStewardEnabled = !cfg.aiStewardEnabled) },
-                            label = { Text(if (strings.isSpanish) "Comisario IA ${if (cfg.aiStewardEnabled) "ON" else "OFF"}" else "AI Steward ${if (cfg.aiStewardEnabled) "ON" else "OFF"}") }
+                            label = { Text(if (strings.isSpanish) "Comisario IA ${if (cfg.aiStewardEnabled) "ON" else "OFF"}" else "AI Steward ${if (cfg.aiStewardEnabled) "ON" else "OFF"}") },
+                            colors = mxChipColors()
                         )
                     }
                     items(PassingDirection.entries) { dir ->
@@ -923,47 +970,69 @@ private fun DirectorAntennaMonitorTab(
                         FilterChip(
                             selected = cfg.directionFilter == dir,
                             onClick = { viewModel.updateRemoteAntennaConfig(selectedAntennaId, directionFilter = dir) },
-                            label = { Text(dirLabel) }
+                            label = { Text(dirLabel) },
+                            colors = mxChipColors()
                         )
                     }
                 }
 
-                Text(if (strings.isSpanish) "Orientación y Posición Línea (${(cfg.linePosition * 100).toInt()}%)" else "Line Orientation & Position (${(cfg.linePosition * 100).toInt()}%)")
+                Text(
+                    if (strings.isSpanish) "Orientación y Posición Línea (${(cfg.linePosition * 100).toInt()}%)" else "Line Orientation & Position (${(cfg.linePosition * 100).toInt()}%)",
+                    style = MaterialTheme.typography.labelLarge,
+                    color = MaterialTheme.colorScheme.onSurface
+                )
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     FilterChip(
                         selected = cfg.lineOrientation == LineOrientation.VERTICAL,
                         onClick = { viewModel.updateRemoteAntennaConfig(selectedAntennaId, lineOrientation = LineOrientation.VERTICAL) },
-                        label = { Text("Vertical") }
+                        label = { Text("Vertical") },
+                        colors = mxChipColors()
                     )
                     FilterChip(
                         selected = cfg.lineOrientation == LineOrientation.HORIZONTAL,
                         onClick = { viewModel.updateRemoteAntennaConfig(selectedAntennaId, lineOrientation = LineOrientation.HORIZONTAL) },
-                        label = { Text("Horizontal") }
+                        label = { Text("Horizontal") },
+                        colors = mxChipColors()
                     )
                 }
                 Slider(
                     value = cfg.linePosition,
                     onValueChange = { viewModel.updateRemoteAntennaConfig(selectedAntennaId, linePosition = it) },
-                    valueRange = 0.1f..0.9f
+                    valueRange = 0.1f..0.9f,
+                    colors = SliderDefaults.colors(
+                        thumbColor = mx.goldAccent,
+                        activeTrackColor = mx.goldAccent,
+                        inactiveTrackColor = mx.glassBorder
+                    )
                 )
 
-                Text(if (strings.isSpanish) "Tamaño Túnel ROI" else "ROI Tunnel Size")
+                Text(
+                    if (strings.isSpanish) "Tamaño Túnel ROI" else "ROI Tunnel Size",
+                    style = MaterialTheme.typography.labelLarge,
+                    color = MaterialTheme.colorScheme.onSurface
+                )
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     RoiSize.entries.forEach { sz ->
                         FilterChip(
                             selected = cfg.roiSize == sz,
                             onClick = { viewModel.updateRemoteAntennaConfig(selectedAntennaId, roiSize = sz) },
-                            label = { Text(sz.name) }
+                            label = { Text(sz.name) },
+                            colors = mxChipColors()
                         )
                     }
                 }
-                Text(if (strings.isSpanish) "Altura Túnel ROI" else "ROI Tunnel Height")
+                Text(
+                    if (strings.isSpanish) "Altura Túnel ROI" else "ROI Tunnel Height",
+                    style = MaterialTheme.typography.labelLarge,
+                    color = MaterialTheme.colorScheme.onSurface
+                )
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     RoiHeight.entries.forEach { rh ->
                         FilterChip(
                             selected = cfg.roiHeight == rh,
                             onClick = { viewModel.updateRemoteAntennaConfig(selectedAntennaId, roiHeight = rh) },
-                            label = { Text(rh.name) }
+                            label = { Text(rh.name) },
+                            colors = mxChipColors()
                         )
                     }
                 }
@@ -974,6 +1043,7 @@ private fun DirectorAntennaMonitorTab(
 
 @Composable
 private fun DirectorSetupWizardTab(strings: MxStrings) {
+    val mx = LocalMxColors.current
     val steps = if (strings.isSpanish) {
         listOf(
             "Colocar Antena 1 en línea de meta y Antena 2 de refuerzo en trípode firme.",
@@ -1002,16 +1072,24 @@ private fun DirectorSetupWizardTab(strings: MxStrings) {
             .padding(16.dp),
         verticalArrangement = Arrangement.spacedBy(8.dp)
     ) {
-        Text(strings.setupWizard, style = MaterialTheme.typography.headlineMedium)
+        Text(strings.setupWizard, style = MaterialTheme.typography.headlineMedium, color = MaterialTheme.colorScheme.onBackground)
         steps.forEachIndexed { idx, txt ->
             GlassRaceCard {
                 Row(
                     modifier = Modifier.fillMaxWidth().padding(10.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Checkbox(checked = checked[idx], onCheckedChange = { checked[idx] = it })
+                    Checkbox(
+                        checked = checked[idx],
+                        onCheckedChange = { checked[idx] = it },
+                        colors = CheckboxDefaults.colors(
+                            checkedColor = mx.goldAccent,
+                            checkmarkColor = contrastTextOn(mx.goldAccent),
+                            uncheckedColor = mx.subtleText
+                        )
+                    )
                     Spacer(Modifier.width(8.dp))
-                    Text("${idx + 1}. $txt", style = MaterialTheme.typography.bodyMedium)
+                    Text("${idx + 1}. $txt", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurface)
                 }
             }
         }
