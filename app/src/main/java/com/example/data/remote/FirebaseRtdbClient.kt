@@ -40,9 +40,23 @@ import java.util.concurrent.TimeUnit
 class FirebaseRtdbClient {
 
     companion object {
-        const val BASE_URL = "https://app-servidor-9bb38-default-rtdb.europe-west1.firebasedatabase.app/mx_pro"
+        const val PRIMARY_BASE_URL = "https://app-servidor-9bb38-default-rtdb.europe-west1.firebasedatabase.app/mx_pro"
+        const val SECONDARY_BASE_URL = "https://metropolitano-mx-circuit-default-rtdb.firebaseio.com/mx_pro"
+        const val BASE_URL = PRIMARY_BASE_URL
         private const val TAG = "FirebaseRtdbClient"
         private val JSON_MEDIA = "application/json; charset=utf-8".toMediaType()
+    }
+
+    @Volatile
+    var activeBaseUrl: String = PRIMARY_BASE_URL
+        private set
+
+    private fun alternateBaseUrl(): String =
+        if (activeBaseUrl == PRIMARY_BASE_URL) SECONDARY_BASE_URL else PRIMARY_BASE_URL
+
+    private fun buildUrl(base: String, path: String): String {
+        val clean = path.trimStart('/').split("/").joinToString("/") { android.net.Uri.encode(it) }
+        return "$base/$clean.json"
     }
 
     val moshi: Moshi = Moshi.Builder()
@@ -84,14 +98,14 @@ class FirebaseRtdbClient {
         var anySuccess = false
 
         val dev = deviceId.ifBlank { "dev" }
-        val url = "$BASE_URL/_clock_sync/$dev.json"
 
         repeat(3) {
             try {
                 val wallBefore = System.currentTimeMillis()
                 val monoBefore = SystemClock.elapsedRealtime()
                 val body = """{"ts":{".sv":"timestamp"}}""".toRequestBody(JSON_MEDIA)
-                val req = Request.Builder().url(url).put(body).build()
+                var url = buildUrl(activeBaseUrl, "_clock_sync/$dev")
+                var req = Request.Builder().url(url).put(body).build()
                 http.newCall(req).execute().use { resp ->
                     val monoAfter = SystemClock.elapsedRealtime()
                     val rtt = (monoAfter - monoBefore).coerceAtLeast(0L)
@@ -105,6 +119,24 @@ class FirebaseRtdbClient {
                             if (rtt < bestRtt) {
                                 bestRtt = rtt
                                 bestOffset = offset
+                            }
+                        }
+                    } else if (resp.code == 401 || resp.code == 403 || resp.code == 404) {
+                        val alt = alternateBaseUrl()
+                        url = buildUrl(alt, "_clock_sync/$dev")
+                        req = Request.Builder().url(url).put("""{"ts":{".sv":"timestamp"}}""".toRequestBody(JSON_MEDIA)).build()
+                        http.newCall(req).execute().use { altResp ->
+                            val altRaw = altResp.body?.string()
+                            if (altResp.isSuccessful && !altRaw.isNullOrBlank()) {
+                                val sTs = JSONObject(altRaw).optLong("ts", 0L)
+                                if (sTs > 0L) {
+                                    activeBaseUrl = alt
+                                    anySuccess = true
+                                    bestOffset = sTs - (wallBefore + (SystemClock.elapsedRealtime() - monoBefore) / 2L)
+                                    bestRtt = (SystemClock.elapsedRealtime() - monoBefore).coerceAtLeast(0L)
+                                }
+                            } else {
+                                lastNetworkError = "HTTP ${resp.code} (reglas RTDB bloqueadas)"
                             }
                         }
                     } else if (!resp.isSuccessful) {
@@ -128,11 +160,28 @@ class FirebaseRtdbClient {
         serverTimeOffsetMs
     }
 
+    private fun executeWithFailover(buildRequest: (String) -> Request): okhttp3.Response {
+        val primaryReq = buildRequest(activeBaseUrl)
+        val resp = http.newCall(primaryReq).execute()
+        if (resp.code == 401 || resp.code == 403 || resp.code == 404) {
+            val alt = alternateBaseUrl()
+            val altReq = buildRequest(alt)
+            val altResp = http.newCall(altReq).execute()
+            if (altResp.isSuccessful) {
+                resp.close()
+                activeBaseUrl = alt
+                return altResp
+            }
+            altResp.close()
+        }
+        return resp
+    }
+
     fun observePathEvents(path: String): Flow<String> = flow {
         while (currentCoroutineContext().isActive) {
             try {
                 val req = Request.Builder()
-                    .url("$BASE_URL/$path.json")
+                    .url(buildUrl(activeBaseUrl, path))
                     .header("Accept", "text/event-stream")
                     .build()
                 streamHttp.newCall(req).execute().use { resp ->
@@ -154,6 +203,8 @@ class FirebaseRtdbClient {
                                 }
                             }
                         }
+                    } else if (resp.code == 401 || resp.code == 403) {
+                        activeBaseUrl = alternateBaseUrl()
                     }
                 }
             } catch (e: Exception) {
@@ -166,12 +217,15 @@ class FirebaseRtdbClient {
 
     private suspend inline fun <reified T> getObject(path: String): T? = withContext(Dispatchers.IO) {
         try {
-            val req = Request.Builder().url("$BASE_URL/$path.json").get().build()
-            http.newCall(req).execute().use { resp ->
+            executeWithFailover { base ->
+                Request.Builder().url(buildUrl(base, path)).get().build()
+            }.use { resp ->
                 val raw = resp.body?.string()
                 isOnline = resp.isSuccessful
                 if (!resp.isSuccessful || raw.isNullOrBlank() || raw == "null") {
-                    if (!resp.isSuccessful) lastNetworkError = "GET $path HTTP ${resp.code}"
+                    if (!resp.isSuccessful) {
+                        lastNetworkError = if (resp.code == 401) "GET $path HTTP 401 (Reglas RTDB bloqueadas)" else "GET $path HTTP ${resp.code}"
+                    }
                     return@withContext null
                 }
                 try {
@@ -191,8 +245,9 @@ class FirebaseRtdbClient {
 
     private suspend inline fun <reified T> getMap(path: String): Map<String, T> = withContext(Dispatchers.IO) {
         try {
-            val req = Request.Builder().url("$BASE_URL/$path.json").get().build()
-            http.newCall(req).execute().use { resp ->
+            executeWithFailover { base ->
+                Request.Builder().url(buildUrl(base, path)).get().build()
+            }.use { resp ->
                 val raw = resp.body?.string()
                 isOnline = resp.isSuccessful
                 if (!resp.isSuccessful || raw.isNullOrBlank() || raw == "null") {
@@ -248,14 +303,15 @@ class FirebaseRtdbClient {
     private suspend inline fun <reified T> putObject(path: String, value: T): Boolean = withContext(Dispatchers.IO) {
         try {
             val json = moshi.adapter(T::class.java).toJson(value)
-            val req = Request.Builder()
-                .url("$BASE_URL/$path.json")
-                .put(json.toRequestBody(JSON_MEDIA))
-                .build()
-            http.newCall(req).execute().use { resp ->
+            executeWithFailover { base ->
+                Request.Builder()
+                    .url(buildUrl(base, path))
+                    .put(json.toRequestBody(JSON_MEDIA))
+                    .build()
+            }.use { resp ->
                 isOnline = resp.isSuccessful
                 if (!resp.isSuccessful) {
-                    lastNetworkError = "PUT $path HTTP ${resp.code}"
+                    lastNetworkError = if (resp.code == 401) "PUT $path HTTP 401 (Reglas RTDB bloqueadas)" else "PUT $path HTTP ${resp.code}"
                     Log.w(TAG, "PUT failed $path code=${resp.code}")
                 } else {
                     lastNetworkError = null
@@ -272,14 +328,19 @@ class FirebaseRtdbClient {
 
     private suspend fun patchJson(path: String, jsonObjectString: String): Boolean = withContext(Dispatchers.IO) {
         try {
-            val req = Request.Builder()
-                .url("$BASE_URL/$path.json")
-                .patch(jsonObjectString.toRequestBody(JSON_MEDIA))
-                .build()
-            http.newCall(req).execute().use { resp ->
+            executeWithFailover { base ->
+                Request.Builder()
+                    .url(buildUrl(base, path))
+                    .patch(jsonObjectString.toRequestBody(JSON_MEDIA))
+                    .build()
+            }.use { resp ->
                 isOnline = resp.isSuccessful
                 if (!resp.isSuccessful) {
-                    lastNetworkError = "PATCH $path HTTP ${resp.code}"
+                    lastNetworkError = if (resp.code == 401) {
+                        "PATCH $path HTTP 401 (Reglas Firebase RTDB bloqueadas o caducadas)"
+                    } else {
+                        "PATCH $path HTTP ${resp.code}"
+                    }
                     Log.w(TAG, "PATCH failed $path code=${resp.code}")
                 } else {
                     lastNetworkError = null
@@ -296,8 +357,9 @@ class FirebaseRtdbClient {
 
     private suspend fun deletePath(path: String): Boolean = withContext(Dispatchers.IO) {
         try {
-            val req = Request.Builder().url("$BASE_URL/$path.json").delete().build()
-            http.newCall(req).execute().use { resp ->
+            executeWithFailover { base ->
+                Request.Builder().url(buildUrl(base, path)).delete().build()
+            }.use { resp ->
                 isOnline = resp.isSuccessful
                 resp.isSuccessful
             }
@@ -311,8 +373,9 @@ class FirebaseRtdbClient {
     // --- Global Config (lenient parser handles legacy fields, APK lock, & custom access codes) ---
     suspend fun fetchGlobalConfig(): GlobalConfig? = withContext(Dispatchers.IO) {
         try {
-            val req = Request.Builder().url("$BASE_URL/config.json").get().build()
-            http.newCall(req).execute().use { resp ->
+            executeWithFailover { base ->
+                Request.Builder().url(buildUrl(base, "config")).get().build()
+            }.use { resp ->
                 val raw = resp.body?.string()
                 isOnline = resp.isSuccessful
                 if (!resp.isSuccessful) return@withContext null
@@ -435,8 +498,9 @@ class FirebaseRtdbClient {
             )
         )
         try {
-            val req = Request.Builder().url("$BASE_URL/antennas/$circuitId.json").get().build()
-            http.newCall(req).execute().use { resp ->
+            executeWithFailover { base ->
+                Request.Builder().url(buildUrl(base, "antennas/$circuitId")).get().build()
+            }.use { resp ->
                 val raw = resp.body?.string()
                 isOnline = resp.isSuccessful
                 if (!resp.isSuccessful || raw.isNullOrBlank() || raw == "null") {
@@ -466,8 +530,9 @@ class FirebaseRtdbClient {
     suspend fun fetchAllCircuitAntennas(): Map<String, Map<String, AntennaConfig>> = withContext(Dispatchers.IO) {
         val out = linkedMapOf<String, Map<String, AntennaConfig>>()
         try {
-            val req = Request.Builder().url("$BASE_URL/antennas.json").get().build()
-            http.newCall(req).execute().use { resp ->
+            executeWithFailover { base ->
+                Request.Builder().url(buildUrl(base, "antennas")).get().build()
+            }.use { resp ->
                 val raw = resp.body?.string()
                 if (!resp.isSuccessful || raw.isNullOrBlank() || raw == "null") return@withContext out
                 val root = JSONObject(raw)
@@ -491,7 +556,7 @@ class FirebaseRtdbClient {
         out
     }
 
-    private fun parseAntennaConfigSafe(circuitId: String, key: String, obj: JSONObject): AntennaConfig {
+    fun parseAntennaConfigSafe(circuitId: String, key: String, obj: JSONObject): AntennaConfig {
         val id = obj.optString("antennaId", key).ifBlank { key }
         val cid = obj.optString("circuitId", circuitId).ifBlank { circuitId }
         val modeStr = obj.optString("detectionMode", "ANY_PASS")
@@ -546,7 +611,10 @@ class FirebaseRtdbClient {
                 .getOrDefault(com.example.data.model.RoiHeight.MEDIUM),
             lineOrientation = runCatching { com.example.data.model.LineOrientation.valueOf(orientStr) }
                 .getOrDefault(com.example.data.model.LineOrientation.VERTICAL),
-            linePosition = obj.optDouble("linePosition", 0.5).toFloat().coerceIn(0.1f, 0.9f),
+            linePosition = obj.optDouble("linePosition", 0.42).toFloat().coerceIn(0.1f, 0.9f),
+            colorZoneX = obj.optDouble("colorZoneX", 0.70).toFloat().coerceIn(0.15f, 0.85f),
+            colorZoneY = obj.optDouble("colorZoneY", 0.50).toFloat().coerceIn(0.15f, 0.85f),
+            singleTargetColorName = obj.optString("singleTargetColorName", ""),
             directionFilter = runCatching { com.example.data.model.PassingDirection.valueOf(dirStr) }
                 .getOrDefault(com.example.data.model.PassingDirection.ANY),
             aiStewardEnabled = obj.optBoolean("aiStewardEnabled", true),

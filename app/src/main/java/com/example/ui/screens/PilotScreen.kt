@@ -30,6 +30,7 @@ import androidx.compose.material.icons.filled.CameraAlt
 import androidx.compose.material.icons.filled.Casino
 import androidx.compose.material.icons.filled.Flag
 import androidx.compose.material.icons.filled.Group
+import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.Logout
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Radio
@@ -56,6 +57,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
@@ -73,6 +75,7 @@ import com.example.ui.components.GlassRaceCard
 import com.example.ui.components.Mx3dButton
 import com.example.ui.components.Mx3dOutlinedButton
 import com.example.ui.components.MxTopHeader
+import com.example.ui.components.PilotStartGateIlluminationOverlay
 import com.example.ui.components.PocketModeOverlay
 import com.example.ui.components.RiderDorsalBadge
 import com.example.ui.components.SupercrossStartGateCard
@@ -97,6 +100,7 @@ fun PilotScreen(
     var transmitterMode by remember { mutableStateOf(false) }
     var pocketMode by remember { mutableStateOf(false) }
     var soloAntennaMode by remember { mutableStateOf(false) }
+    var dismissedGreenForStartMs by remember { mutableLongStateOf(0L) }
 
     val notifLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission()
@@ -146,53 +150,90 @@ fun PilotScreen(
         return
     }
 
-    // High-contrast Radio Transmitter Mode ("Modo Emisora")
-    if (transmitterMode) {
-        BackHandler { transmitterMode = false }
-        Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .background(Color(0xFF05070A))
-                .padding(20.dp),
-            verticalArrangement = Arrangement.SpaceBetween,
-            horizontalAlignment = Alignment.CenterHorizontally
-        ) {
-            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-                Text("P${if (myPosition > 0) myPosition else "-"} • ${rider?.name ?: ""}", style = MaterialTheme.typography.displayMedium, color = mx.goldBright)
-                OutlinedButton(onClick = { transmitterMode = false }) { Text(if (strings.isSpanish) "Salir" else "Exit") }
-            }
-            Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                Text(strings.liveLap.uppercase(), style = MaterialTheme.typography.titleLarge, color = Color(0xFF94A3B8))
-                Text(
-                    text = formatLapMs(currentLapElapsedMs),
-                    style = MaterialTheme.typography.displayLarge.copy(fontSize = 72.sp, lineHeight = 76.sp),
-                    color = Color.White
-                )
-                Spacer(Modifier.height(10.dp))
-                val lastDelta = if (roomRider != null && roomRider.bestLapMs > 0 && roomRider.lastLapMs > 0) {
-                    roomRider.lastLapMs - roomRider.bestLapMs
-                } else 0L
-                Text(
-                    text = "${strings.bestLap}: ${formatLapMs(roomRider?.bestLapMs ?: 0L)}  (${formatDeltaMs(lastDelta)})",
-                    style = MaterialTheme.typography.headlineMedium,
-                    color = if (lastDelta <= 0L) mx.telemetryGreen else mx.racingRed
-                )
-            }
-            Mx3dButton(
-                onClick = { viewModel.recordManualLapForCurrentRider() },
-                containerColor = mx.goldAccent,
-                contentColor = contrastTextOn(mx.goldAccent),
-                modifier = Modifier.fillMaxWidth().height(72.dp).testTag("transmitter_manual_lap")
-            ) {
-                Text(strings.manualLap.uppercase(), style = MaterialTheme.typography.headlineMedium)
-            }
-        }
-        return
-    }
-
     val lastHotlapAtMs = if (state.roomState.lastPaAnnouncement?.isHotlap == true) {
         state.roomState.lastPaAnnouncement.timestampMs
     } else 0L
+
+    // High-contrast Radio Transmitter Mode ("Modo Emisora")
+    if (transmitterMode) {
+        BackHandler { transmitterMode = false }
+        Box(modifier = Modifier.fillMaxSize()) {
+            Column(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(Color(0xFF05070A))
+                    .padding(20.dp),
+                verticalArrangement = Arrangement.SpaceBetween,
+                horizontalAlignment = Alignment.CenterHorizontally
+            ) {
+                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                    Text("P${if (myPosition > 0) myPosition else "-"} • ${rider?.name ?: ""}", style = MaterialTheme.typography.displayMedium, color = mx.goldBright)
+                    OutlinedButton(onClick = { transmitterMode = false }) { Text(if (strings.isSpanish) "Salir" else "Exit") }
+                }
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    Text(strings.liveLap.uppercase(), style = MaterialTheme.typography.titleLarge, color = Color(0xFF94A3B8))
+                    Text(
+                        text = formatLapMs(currentLapElapsedMs),
+                        style = MaterialTheme.typography.displayLarge.copy(fontSize = 72.sp, lineHeight = 76.sp),
+                        color = Color.White
+                    )
+                    Spacer(Modifier.height(10.dp))
+                    val lastDelta = if (roomRider != null && roomRider.bestLapMs > 0 && roomRider.lastLapMs > 0) {
+                        roomRider.lastLapMs - roomRider.bestLapMs
+                    } else 0L
+                    Text(
+                        text = "${strings.bestLap}: ${formatLapMs(roomRider?.bestLapMs ?: 0L)}  (${formatDeltaMs(lastDelta)})",
+                        style = MaterialTheme.typography.headlineMedium,
+                        color = if (lastDelta <= 0L) mx.telemetryGreen else mx.racingRed
+                    )
+                }
+                Row(horizontalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.fillMaxWidth()) {
+                    Mx3dButton(
+                        onClick = { viewModel.recordManualLapForCurrentRider() },
+                        containerColor = mx.goldAccent,
+                        contentColor = contrastTextOn(mx.goldAccent),
+                        modifier = Modifier.weight(1f).height(72.dp).testTag("transmitter_manual_lap")
+                    ) {
+                        val label = if (currentLapElapsedMs <= 0L) {
+                            if (strings.isSpanish) "INICIAR" else "START"
+                        } else {
+                            strings.manualLap.uppercase()
+                        }
+                        Text(label, style = MaterialTheme.typography.titleLarge)
+                    }
+                    Mx3dButton(
+                        enabled = currentLapElapsedMs > 0L,
+                        onClick = { viewModel.stopManualChronoForCurrentRider() },
+                        containerColor = mx.racingRed,
+                        contentColor = Color.White,
+                        modifier = Modifier.height(72.dp).testTag("transmitter_stop_chrono")
+                    ) {
+                        Icon(Icons.Default.Stop, contentDescription = "STOP")
+                        Spacer(Modifier.width(4.dp))
+                        Text("STOP", style = MaterialTheme.typography.titleLarge)
+                    }
+                }
+            }
+            FlagAndRecordFrameOverlay(
+                flagState = state.roomState.flagState,
+                lastHotlapAtMs = lastHotlapAtMs,
+                nowMs = liveNowMs,
+                sessionPhase = state.roomState.sessionPhase,
+                phaseStartTimeMs = state.roomState.phaseStartTimeMs,
+                isSpanish = strings.isSpanish
+            )
+            PilotStartGateIlluminationOverlay(
+                sessionPhase = state.roomState.sessionPhase,
+                phaseEndTimeMs = state.roomState.phaseEndTimeMs,
+                phaseStartTimeMs = state.roomState.phaseStartTimeMs,
+                nowMs = liveNowMs,
+                isSpanish = strings.isSpanish,
+                dismissedGreenForStartMs = dismissedGreenForStartMs,
+                onDismissGreen = { dismissedGreenForStartMs = state.roomState.phaseStartTimeMs }
+            )
+        }
+        return
+    }
 
     CarbonStadiumBackdrop {
         Box(modifier = Modifier.fillMaxSize()) {
@@ -254,7 +295,19 @@ fun PilotScreen(
             FlagAndRecordFrameOverlay(
                 flagState = state.roomState.flagState,
                 lastHotlapAtMs = lastHotlapAtMs,
-                nowMs = liveNowMs
+                nowMs = liveNowMs,
+                sessionPhase = state.roomState.sessionPhase,
+                phaseStartTimeMs = state.roomState.phaseStartTimeMs,
+                isSpanish = strings.isSpanish
+            )
+            PilotStartGateIlluminationOverlay(
+                sessionPhase = state.roomState.sessionPhase,
+                phaseEndTimeMs = state.roomState.phaseEndTimeMs,
+                phaseStartTimeMs = state.roomState.phaseStartTimeMs,
+                nowMs = liveNowMs,
+                isSpanish = strings.isSpanish,
+                dismissedGreenForStartMs = dismissedGreenForStartMs,
+                onDismissGreen = { dismissedGreenForStartMs = state.roomState.phaseStartTimeMs }
             )
         }
     }
@@ -328,9 +381,9 @@ private fun PilotTrackRoomTab(
                     color = mx.goldAccent
                 )
                 if (room.sessionPhase == SessionPhase.COUNTDOWN_30 && room.phaseEndTimeMs > liveNowMs) {
-                    val rem = ((room.phaseEndTimeMs - liveNowMs) / 1000L).coerceAtLeast(0L)
+                    val rem = ((room.phaseEndTimeMs - liveNowMs + 200L) / 1000L).coerceAtLeast(0L)
                     Text(
-                        text = "GATE DROP IN ${rem}s",
+                        text = if (strings.isSpanish) "SALIDA EN ${rem}s" else "GATE DROP IN ${rem}s",
                         style = MaterialTheme.typography.displayMedium,
                         color = mx.racingRed
                     )
@@ -339,13 +392,19 @@ private fun PilotTrackRoomTab(
                     val mins = remSec / 60L
                     val secs = remSec % 60L
                     Text(
+                        text = "WARM-UP: %02d:%02d".format(mins, secs),
+                        style = MaterialTheme.typography.displayMedium,
+                        color = mx.smBadge,
+                        fontWeight = FontWeight.Bold
+                    )
+                    Text(
                         text = if (strings.isSpanish) {
-                            "WARM-UP CAPTURA: %02d:%02d".format(mins, secs)
+                            "Pasad varias veces por meta para capturar vuestros colores"
                         } else {
-                            "WARM-UP CAPTURE: %02d:%02d".format(mins, secs)
+                            "Pass finish line multiple times to capture colors"
                         },
-                        style = MaterialTheme.typography.headlineMedium,
-                        color = mx.smBadge
+                        style = MaterialTheme.typography.labelMedium,
+                        color = mx.goldBright
                     )
                 } else if (room.sessionPhase == SessionPhase.RACING && room.phaseEndTimeMs > liveNowMs) {
                     val remSec = ((room.phaseEndTimeMs - liveNowMs) / 1000L).coerceAtLeast(0L)
@@ -361,6 +420,18 @@ private fun PilotTrackRoomTab(
                         color = mx.telemetryGreen
                     )
                 }
+                if (room.sessionPhase != SessionPhase.IDLE && room.friendlyModeActive) {
+                    Mx3dButton(
+                        onClick = { viewModel.stopSession(isDirector = false) },
+                        containerColor = mx.racingRed,
+                        contentColor = Color.White,
+                        modifier = Modifier.fillMaxWidth().testTag("pilot_track_stop_friendly_btn")
+                    ) {
+                        Icon(Icons.Default.Stop, contentDescription = null)
+                        Spacer(Modifier.width(6.dp))
+                        Text(if (room.sessionPhase == SessionPhase.WARMUP) "STOP WARM-UP" else if (strings.isSpanish) "STOP CARRERA" else "STOP RACE")
+                    }
+                }
             }
         }
 
@@ -372,7 +443,7 @@ private fun PilotTrackRoomTab(
             isSpanish = strings.isSpanish
         )
 
-        // Live Chronometer + Position + Dorsal + Manual Lap
+        // Live Chronometer + Position + Dorsal + Manual Lap / STOP
         val myColorProfile = rider?.let { r -> state.colorProfiles.firstOrNull { it.riderId == r.id } }
         GlassRaceCard(accentBorder = mx.goldAccent.copy(alpha = 0.65f)) {
             Column(
@@ -426,17 +497,45 @@ private fun PilotTrackRoomTab(
                     }
                 }
                 Spacer(Modifier.height(12.dp))
-                Mx3dButton(
-                    onClick = { viewModel.recordManualLapForCurrentRider() },
-                    containerColor = mx.goldAccent,
-                    contentColor = contrastTextOn(mx.goldAccent),
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .testTag("pilot_manual_lap_button")
+                val chronoRunning = (roomRider?.lastPassTimestampMs ?: 0L) > 0L
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
-                    Icon(Icons.Default.TouchApp, contentDescription = null)
-                    Spacer(Modifier.width(8.dp))
-                    Text(strings.manualLap, style = MaterialTheme.typography.titleMedium)
+                    Mx3dButton(
+                        onClick = { viewModel.recordManualLapForCurrentRider() },
+                        containerColor = mx.goldAccent,
+                        contentColor = contrastTextOn(mx.goldAccent),
+                        modifier = Modifier
+                            .weight(1f)
+                            .testTag("pilot_manual_lap_button")
+                    ) {
+                        Icon(
+                            if (chronoRunning) Icons.Default.TouchApp else Icons.Default.PlayArrow,
+                            contentDescription = null
+                        )
+                        Spacer(Modifier.width(6.dp))
+                        Text(
+                            text = if (chronoRunning) {
+                                strings.manualLap
+                            } else {
+                                if (strings.isSpanish) "Iniciar Crono" else "Start Timer"
+                            },
+                            style = MaterialTheme.typography.titleMedium,
+                            maxLines = 1
+                        )
+                    }
+                    Mx3dButton(
+                        enabled = chronoRunning,
+                        onClick = { viewModel.stopManualChronoForCurrentRider() },
+                        containerColor = mx.racingRed,
+                        contentColor = Color.White,
+                        modifier = Modifier.testTag("pilot_manual_stop_button")
+                    ) {
+                        Icon(Icons.Default.Stop, contentDescription = null)
+                        Spacer(Modifier.width(4.dp))
+                        Text("STOP", style = MaterialTheme.typography.titleMedium, maxLines = 1)
+                    }
                 }
             }
         }
@@ -480,7 +579,8 @@ private fun PilotTrackRoomTab(
         }
 
         // Group Heat Mode without Director ("Manga Libre entre Pilotos")
-        GlassRaceCard(accentBorder = mx.smBadge.copy(alpha = 0.55f)) {
+        val lockedByActiveSession = room.sessionPhase != SessionPhase.IDLE
+        GlassRaceCard(accentBorder = if (lockedByActiveSession) mx.racingRed.copy(alpha = 0.65f) else mx.smBadge.copy(alpha = 0.55f)) {
             Column(modifier = Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Row(
                     modifier = Modifier.fillMaxWidth(),
@@ -488,12 +588,12 @@ private fun PilotTrackRoomTab(
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
-                        Icon(Icons.Default.Group, contentDescription = null, tint = mx.smBadge)
+                        Icon(if (lockedByActiveSession) Icons.Default.Lock else Icons.Default.Group, contentDescription = null, tint = if (lockedByActiveSession) mx.racingRed else mx.smBadge)
                         Spacer(Modifier.width(6.dp))
                         Text(
                             if (strings.isSpanish) "Manga entre Pilotos (Sin Director)" else "Group Heat (No Director)",
                             style = MaterialTheme.typography.titleLarge,
-                            color = mx.smBadge
+                            color = if (lockedByActiveSession) mx.racingRed else mx.smBadge
                         )
                     }
                     Text(
@@ -502,16 +602,32 @@ private fun PilotTrackRoomTab(
                         color = mx.telemetryGreen
                     )
                 }
-                Text(
-                    if (strings.isSpanish) "Los pilotos del circuito os unís aquí y lanzáis la manga juntos:"
-                    else "Riders in this circuit join together and start a heat without a Director:",
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = mx.subtleText
-                )
+                if (lockedByActiveSession) {
+                    Text(
+                        text = if (!room.friendlyModeActive) {
+                            if (strings.isSpanish) "Sesión controlada por Dirección (${room.sessionPhase.name}) — organización de manga bloqueada hasta finalizar o STOP de Dirección."
+                            else "Session controlled by Director (${room.sessionPhase.name}) — group heat setup locked until Director stops."
+                        } else {
+                            if (strings.isSpanish) "Sesión en curso (${room.sessionPhase.name}) — pulsa STOP antes de organizar otra manga."
+                            else "Session active (${room.sessionPhase.name}) — press STOP before organizing another heat."
+                        },
+                        style = MaterialTheme.typography.labelMedium,
+                        color = mx.racingRed,
+                        fontWeight = FontWeight.Bold
+                    )
+                } else {
+                    Text(
+                        if (strings.isSpanish) "Los pilotos del circuito os unís aquí y lanzáis la manga juntos:"
+                        else "Riders in this circuit join together and start a heat without a Director:",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = mx.subtleText
+                    )
+                }
                 LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                     items(GameMode.entries) { gm ->
                         FilterChip(
                             selected = room.gameMode == gm,
+                            enabled = !lockedByActiveSession,
                             onClick = { viewModel.updateRoomSettings(gameMode = gm) },
                             label = { Text(gm.name.replace("_", " ")) },
                             colors = mxChipColors()
@@ -522,6 +638,7 @@ private fun PilotTrackRoomTab(
                     listOf(180, 300, 480).forEach { sec ->
                         FilterChip(
                             selected = room.heatDurationSec == sec,
+                            enabled = !lockedByActiveSession,
                             onClick = { viewModel.updateRoomSettings(heatDurationSec = sec) },
                             label = { Text("${sec / 60}m") },
                             colors = mxChipColors()
@@ -544,11 +661,13 @@ private fun PilotTrackRoomTab(
                 }
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
                     Mx3dOutlinedButton(
+                        enabled = !lockedByActiveSession,
                         onClick = { viewModel.runFriendly10sCalibration() },
                         borderColor = mx.telemetryGreen,
                         modifier = Modifier.weight(1f)
                     ) { Text(strings.calibrate10s, maxLines = 1) }
                     Mx3dOutlinedButton(
+                        enabled = !lockedByActiveSession,
                         onClick = { viewModel.startFriendlyWarmup() },
                         borderColor = mx.goldAccent,
                         modifier = Modifier.weight(1f)
@@ -556,17 +675,20 @@ private fun PilotTrackRoomTab(
                 }
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
                     Mx3dOutlinedButton(
+                        enabled = !lockedByActiveSession,
                         onClick = { viewModel.startFriendly30sGate() },
                         borderColor = mx.racingRed,
                         modifier = Modifier.weight(1f)
                     ) { Text(strings.startLight30s, maxLines = 1) }
                     Mx3dOutlinedButton(
+                        enabled = !lockedByActiveSession,
                         onClick = { viewModel.startFriendlyRandomGate() },
                         borderColor = mx.smBadge,
                         modifier = Modifier.weight(1f)
                     ) { Text(strings.randomGate, maxLines = 1) }
                 }
                 Mx3dButton(
+                    enabled = !lockedByActiveSession,
                     onClick = { viewModel.startFriendlyDirectHeat(room.heatDurationSec) },
                     containerColor = mx.telemetryGreen,
                     contentColor = contrastTextOn(mx.telemetryGreen),
@@ -579,12 +701,9 @@ private fun PilotTrackRoomTab(
                         else "Start Group Heat Now (${room.heatDurationSec / 60} min)"
                     )
                 }
-                if (room.sessionPhase == SessionPhase.WARMUP ||
-                    room.sessionPhase == SessionPhase.RACING ||
-                    room.sessionPhase == SessionPhase.COUNTDOWN_30
-                ) {
+                if (lockedByActiveSession && room.friendlyModeActive) {
                     Mx3dButton(
-                        onClick = { viewModel.stopSession() },
+                        onClick = { viewModel.stopSession(isDirector = false) },
                         containerColor = mx.racingRed,
                         contentColor = Color.White,
                         modifier = Modifier

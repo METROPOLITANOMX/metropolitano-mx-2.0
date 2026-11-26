@@ -10,12 +10,14 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
@@ -40,6 +42,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.minimumInteractiveComponentSize
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -59,6 +62,7 @@ import com.example.data.model.DetectionMode
 import com.example.data.model.RiderAccount
 import com.example.data.model.RiderStatus
 import com.example.data.model.SessionPhase
+import com.example.data.model.predefinedMotoColors
 import com.example.i18n.MxStrings
 import com.example.ui.components.GlassRaceCard
 import com.example.ui.components.Mx3dButton
@@ -82,9 +86,29 @@ fun DirectorColorWarmupTab(
     val ant1 = state.antennas[AntennaStation.ANTENA_1.id]
     val latestSamples = ant1?.lastDetectedLab ?: emptyList()
     val ridersInRoom = state.roomState.activeRiders.values.toList()
-    var selectedRiderId by remember { mutableStateOf(ridersInRoom.firstOrNull()?.riderId ?: "") }
+    val selectableRiders = remember(ridersInRoom, state.riders) {
+        if (ridersInRoom.isNotEmpty()) {
+            ridersInRoom.map { it.riderId to "${it.riderName} #${it.dorsal}" }
+        } else {
+            state.riders.map { it.id to it.name }
+        }
+    }
+    var selectedRiderId by remember { mutableStateOf(selectableRiders.firstOrNull()?.first ?: "") }
+    LaunchedEffect(selectableRiders) {
+        if (selectedRiderId.isBlank() || selectableRiders.none { it.first == selectedRiderId }) {
+            selectedRiderId = selectableRiders.firstOrNull()?.first ?: ""
+        }
+    }
+    val selectedRiderName = remember(selectedRiderId, ridersInRoom, state.riders) {
+        ridersInRoom.firstOrNull { it.riderId == selectedRiderId }?.riderName
+            ?: state.riders.firstOrNull { it.id == selectedRiderId }?.name
+            ?: ""
+    }
     val isSingleColorMode = ant1?.detectionMode == DetectionMode.SINGLE_COLOR
+    val isAnyPassMode = ant1?.detectionMode == DetectionMode.ANY_PASS
     val isWarmup = state.roomState.sessionPhase == SessionPhase.WARMUP
+    val predefinedPalette = remember(strings.isSpanish) { predefinedMotoColors(strings.isSpanish) }
+    var manualAsSingle by remember { mutableStateOf(false) }
 
     Column(
         modifier = Modifier
@@ -117,16 +141,22 @@ fun DirectorColorWarmupTab(
                     }
                 }
 
-                if (isWarmup) {
+                if (state.roomState.sessionPhase != SessionPhase.IDLE) {
                     Mx3dButton(
-                        onClick = { viewModel.stopSession() },
+                        onClick = { viewModel.stopSession(isDirector = true) },
                         containerColor = mx.racingRed,
                         contentColor = Color.White,
                         modifier = Modifier.fillMaxWidth()
                     ) {
                         Icon(Icons.Default.Stop, contentDescription = null)
                         Spacer(Modifier.width(6.dp))
-                        Text(if (strings.isSpanish) "STOP WARM-UP (Pilotos a Parrilla)" else "STOP WARM-UP (Riders to Grid)")
+                        Text(
+                            if (isWarmup) {
+                                if (strings.isSpanish) "STOP WARM-UP (Pilotos a Parrilla)" else "STOP WARM-UP (Riders to Grid)"
+                            } else {
+                                if (strings.isSpanish) "STOP SESIÓN ACTIVA" else "STOP ACTIVE SESSION"
+                            }
+                        )
                     }
                 } else {
                     Mx3dButton(
@@ -142,20 +172,31 @@ fun DirectorColorWarmupTab(
                 }
 
                 Text(
-                    if (strings.isSpanish) "Modo de Captura de Color (Antena 1)" else "Color Capture Mode (Antenna 1)",
+                    if (strings.isSpanish) "Modo de Detección (Antena 1)" else "Detection Mode (Antenna 1)",
                     style = MaterialTheme.typography.labelLarge,
                     color = MaterialTheme.colorScheme.onSurface
                 )
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     FilterChip(
-                        selected = !isSingleColorMode,
+                        selected = isAnyPassMode,
+                        onClick = {
+                            viewModel.updateRemoteAntennaConfig(
+                                AntennaStation.ANTENA_1.id,
+                                detectionMode = DetectionMode.ANY_PASS
+                            )
+                        },
+                        label = { Text(if (strings.isSpanish) "Cualq. Paso" else "Any Pass") },
+                        colors = mxChipColors()
+                    )
+                    FilterChip(
+                        selected = ant1?.detectionMode == DetectionMode.FAIRING_COLOR,
                         onClick = {
                             viewModel.updateRemoteAntennaConfig(
                                 AntennaStation.ANTENA_1.id,
                                 detectionMode = DetectionMode.FAIRING_COLOR
                             )
                         },
-                        label = { Text(if (strings.isSpanish) "Multi-Captura" else "Multi-Color") },
+                        label = { Text("Multi-Color") },
                         colors = mxChipColors()
                     )
                     FilterChip(
@@ -173,16 +214,76 @@ fun DirectorColorWarmupTab(
             }
         }
 
-        if (ridersInRoom.isNotEmpty()) {
-            Text(if (strings.isSpanish) "1. Selecciona el Piloto a Entrenar:" else "1. Select Rider to Train:", style = MaterialTheme.typography.titleMedium, color = mx.goldAccent)
+        if (selectableRiders.isNotEmpty()) {
+            Text(if (strings.isSpanish) "1. Selecciona el Piloto:" else "1. Select Rider:", style = MaterialTheme.typography.titleMedium, color = mx.goldAccent)
             LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                items(ridersInRoom) { r ->
+                items(selectableRiders) { (rId, rLabel) ->
                     FilterChip(
-                        selected = r.riderId == selectedRiderId,
-                        onClick = { selectedRiderId = r.riderId },
-                        label = { Text("${r.riderName} #${r.dorsal}") },
+                        selected = rId == selectedRiderId,
+                        onClick = { selectedRiderId = rId },
+                        label = { Text(rLabel) },
                         colors = mxChipColors()
                     )
+                }
+            }
+
+            // Manual Predefined Motocross Color Assignment
+            GlassRaceCard(accentBorder = mx.smBadge.copy(alpha = 0.6f)) {
+                Column(modifier = Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text(
+                        if (strings.isSpanish) "Asignar Color Predefinido Manualmente ($selectedRiderName)"
+                        else "Manually Assign Predefined Color ($selectedRiderName)",
+                        style = MaterialTheme.typography.titleMedium,
+                        color = mx.smBadge
+                    )
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        FilterChip(
+                            selected = !manualAsSingle,
+                            onClick = { manualAsSingle = false },
+                            label = { Text(if (strings.isSpanish) "Añadir (Multi-Color)" else "Add (Multi-Color)") },
+                            colors = mxChipColors()
+                        )
+                        FilterChip(
+                            selected = manualAsSingle,
+                            onClick = { manualAsSingle = true },
+                            label = { Text(if (strings.isSpanish) "Fijar como 1 Color" else "Lock as 1 Color") },
+                            colors = mxChipColors()
+                        )
+                    }
+                    LazyRow(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                        items(predefinedPalette) { sample ->
+                            val swatch = try { Color(android.graphics.Color.parseColor(sample.hex)) } catch (_: Exception) { Color.White }
+                            Column(
+                                horizontalAlignment = Alignment.CenterHorizontally,
+                                modifier = Modifier
+                                    .clickable {
+                                        if (selectedRiderId.isBlank()) return@clickable
+                                        if (manualAsSingle || isSingleColorMode) {
+                                            viewModel.assignSingleColorToRider(selectedRiderId, selectedRiderName, sample)
+                                            if (isSingleColorMode) {
+                                                viewModel.updateRemoteAntennaConfig(
+                                                    AntennaStation.ANTENA_1.id,
+                                                    singleTargetColorName = sample.colorName
+                                                )
+                                            }
+                                        } else {
+                                            viewModel.assignWarmupColorSampleToRider(selectedRiderId, selectedRiderName, listOf(sample))
+                                        }
+                                    }
+                                    .testTag("manual_color_${sample.colorName}")
+                            ) {
+                                Box(
+                                    modifier = Modifier
+                                        .size(34.dp)
+                                        .clip(CircleShape)
+                                        .background(swatch)
+                                        .border(1.5.dp, Color.White, CircleShape)
+                                )
+                                Spacer(Modifier.height(4.dp))
+                                Text(sample.colorName, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurface)
+                            }
+                        }
+                    }
                 }
             }
         }

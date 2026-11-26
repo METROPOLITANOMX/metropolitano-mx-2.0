@@ -23,7 +23,6 @@ import androidx.compose.material3.Surface
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
@@ -32,7 +31,6 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.res.painterResource
@@ -42,17 +40,6 @@ import com.example.R
 import com.example.ui.theme.CarbonVoid
 import com.example.ui.theme.LocalMxColors
 import com.example.ui.theme.SunCanvas
-import kotlin.math.cos
-import kotlin.math.sin
-
-private data class StadiumSpark(
-    val xFraction: Float,
-    val yFraction: Float,
-    val radius: Float,
-    val speed: Float,
-    val phase: Float,
-    val isCyan: Boolean
-)
 
 @Composable
 fun CarbonStadiumBackdrop(
@@ -60,51 +47,20 @@ fun CarbonStadiumBackdrop(
     content: @Composable BoxScope.() -> Unit
 ) {
     val mxColors = LocalMxColors.current
-    val transition = rememberInfiniteTransition(label = "stadium_bg")
-    val drift by transition.animateFloat(
-        initialValue = 0f,
-        targetValue = 6.283185f,
-        animationSpec = infiniteRepeatable(
-            animation = tween(durationMillis = 12000, easing = LinearEasing),
-            repeatMode = RepeatMode.Restart
-        ),
-        label = "drift"
-    )
-    val streakShift by transition.animateFloat(
-        initialValue = -0.3f,
-        targetValue = 1.3f,
-        animationSpec = infiniteRepeatable(
-            animation = tween(durationMillis = 5500, easing = LinearEasing),
-            repeatMode = RepeatMode.Restart
-        ),
-        label = "streak_shift"
-    )
-    val sparks = remember {
-        listOf(
-            StadiumSpark(0.06f, 0.14f, 3.8f, 1.0f, 0.1f, false),
-            StadiumSpark(0.93f, 0.18f, 4.4f, 1.3f, 1.4f, true),
-            StadiumSpark(0.08f, 0.42f, 3.0f, 0.8f, 2.5f, true),
-            StadiumSpark(0.91f, 0.48f, 3.8f, 1.1f, 3.7f, false),
-            StadiumSpark(0.04f, 0.72f, 4.2f, 0.9f, 4.2f, false),
-            StadiumSpark(0.95f, 0.78f, 3.4f, 1.4f, 5.1f, true),
-            StadiumSpark(0.12f, 0.88f, 2.8f, 1.2f, 0.9f, false),
-            StadiumSpark(0.88f, 0.91f, 3.2f, 1.0f, 2.1f, true)
-        )
-    }
 
     Box(
         modifier = modifier
             .fillMaxSize()
             .background(if (mxColors.isSunMode) SunCanvas else CarbonVoid)
     ) {
-        // Illustrated Night Motocross Stadium Track Background (visible behind dark veil for legibility)
+        // Night Motocross Stadium Track backdrop with clean dark carbon veil for readability
         Image(
             painter = painterResource(id = R.drawable.img_mx_stadium_backdrop),
             contentDescription = null,
             contentScale = ContentScale.Crop,
             modifier = Modifier
                 .fillMaxSize()
-                .alpha(if (mxColors.isSunMode) 0.18f else 0.78f)
+                .alpha(if (mxColors.isSunMode) 0.20f else 0.86f)
         )
         Box(
             modifier = Modifier
@@ -113,7 +69,7 @@ fun CarbonStadiumBackdrop(
                     if (mxColors.isSunMode) {
                         Brush.verticalGradient(
                             colors = listOf(
-                                SunCanvas.copy(alpha = 0.84f),
+                                SunCanvas.copy(alpha = 0.85f),
                                 SunCanvas.copy(alpha = 0.78f),
                                 SunCanvas.copy(alpha = 0.88f)
                             )
@@ -121,9 +77,9 @@ fun CarbonStadiumBackdrop(
                     } else {
                         Brush.verticalGradient(
                             colors = listOf(
-                                CarbonVoid.copy(alpha = 0.56f),
-                                CarbonVoid.copy(alpha = 0.46f),
-                                CarbonVoid.copy(alpha = 0.68f)
+                                CarbonVoid.copy(alpha = 0.54f),
+                                CarbonVoid.copy(alpha = 0.42f),
+                                CarbonVoid.copy(alpha = 0.72f)
                             )
                         )
                     }
@@ -133,9 +89,9 @@ fun CarbonStadiumBackdrop(
             val w = size.width
             val h = size.height
             if (!mxColors.isSunMode) {
-                // 1. Subtle racing telemetry micro-grid blended over the track artwork
-                val step = 28f
-                val weaveColorA = Color(0xFF151C29)
+                // Subtle neutral carbon telemetry weave (no colored stripes)
+                val step = 32f
+                val weaveColor = Color(0xFF0F141E)
                 var y = 0f
                 var row = 0
                 while (y < h) {
@@ -144,7 +100,7 @@ fun CarbonStadiumBackdrop(
                     while (x < w) {
                         if ((row + col) % 2 == 0) {
                             drawRect(
-                                color = weaveColorA.copy(alpha = 0.14f),
+                                color = weaveColor.copy(alpha = 0.14f),
                                 topLeft = Offset(x, y),
                                 size = Size(step * 0.85f, step * 0.85f)
                             )
@@ -156,111 +112,22 @@ fun CarbonStadiumBackdrop(
                     row++
                 }
 
-                // 2. Dual Sweeping Supercross Stadium Floodlights (Gold & Nitro Cyan)
-                val beam1 = Path().apply {
-                    moveTo(w * 0.12f, 0f)
-                    lineTo(w * 0.28f, 0f)
-                    lineTo(w * (0.58f + 0.16f * cos(drift)), h * 0.75f)
-                    lineTo(w * (0.34f + 0.16f * cos(drift)), h * 0.75f)
-                    close()
-                }
-                drawPath(
-                    path = beam1,
-                    brush = Brush.verticalGradient(
-                        colors = listOf(
-                            mxColors.goldAccent.copy(alpha = 0.13f),
-                            mxColors.goldAccent.copy(alpha = 0.03f),
-                            Color.Transparent
-                        )
-                    )
-                )
-
-                val beam2 = Path().apply {
-                    moveTo(w * 0.74f, 0f)
-                    lineTo(w * 0.90f, 0f)
-                    lineTo(w * (0.64f - 0.14f * sin(drift)), h * 0.72f)
-                    lineTo(w * (0.42f - 0.14f * sin(drift)), h * 0.72f)
-                    close()
-                }
-                drawPath(
-                    path = beam2,
-                    brush = Brush.verticalGradient(
-                        colors = listOf(
-                            mxColors.smBadge.copy(alpha = 0.10f),
-                            mxColors.smBadge.copy(alpha = 0.02f),
-                            Color.Transparent
-                        )
-                    )
-                )
-
-                // 3. Moving radial stadium glow
-                val spotX = w * (0.5f + 0.20f * cos(drift))
-                val spotY = h * (0.20f + 0.08f * sin(drift))
+                // Soft neutral top stadium floodlight haze
                 drawCircle(
                     brush = Brush.radialGradient(
                         colors = listOf(
-                            mxColors.goldAccent.copy(alpha = 0.16f),
-                            mxColors.racingRed.copy(alpha = 0.05f),
+                            Color.White.copy(alpha = 0.08f),
                             Color.Transparent
                         ),
-                        center = Offset(spotX, spotY),
-                        radius = w * 0.95f
+                        center = Offset(w * 0.5f, h * 0.06f),
+                        radius = w * 0.85f
                     ),
-                    center = Offset(spotX, spotY),
-                    radius = w * 0.95f
+                    center = Offset(w * 0.5f, h * 0.06f),
+                    radius = w * 0.85f
                 )
-
-                // 4. Diagonal Speed Streaks (Motorsport kinetic lines)
-                for (k in 0..3) {
-                    val baseY = h * (0.18f + k * 0.22f)
-                    val sx = w * streakShift - k * 140f
-                    drawLine(
-                        brush = Brush.horizontalGradient(
-                            colors = listOf(
-                                Color.Transparent,
-                                if (k % 2 == 0) mxColors.goldBright.copy(alpha = 0.16f) else mxColors.smBadge.copy(alpha = 0.15f),
-                                Color.Transparent
-                            ),
-                            startX = sx,
-                            endX = sx + w * 0.45f
-                        ),
-                        start = Offset(sx, baseY),
-                        end = Offset(sx + w * 0.45f, baseY - 46f),
-                        strokeWidth = 2.dp.toPx()
-                    )
-                }
-
-                // 5. Subtle Checkered Racing Banner watermark along bottom horizon
-                val checkSize = 14.dp.toPx()
-                val cols = (w / checkSize).toInt() + 1
-                val startCheckY = h - checkSize * 2.2f
-                for (r in 0..1) {
-                    for (c in 0..cols) {
-                        if ((r + c) % 2 == 0) {
-                            drawRect(
-                                color = mxColors.goldAccent.copy(alpha = 0.06f),
-                                topLeft = Offset(c * checkSize, startCheckY + r * checkSize),
-                                size = Size(checkSize, checkSize)
-                            )
-                        }
-                    }
-                }
-
-                // 6. Floating Stadium Sparks
-                sparks.forEach { p ->
-                    val px = w * p.xFraction + 12f * cos(drift * p.speed + p.phase)
-                    val py = h * p.yFraction + 20f * sin(drift * p.speed + p.phase)
-                    val alpha = 0.28f + 0.38f * (0.5f + 0.5f * sin(drift * 2f + p.phase))
-                    drawCircle(
-                        color = (if (p.isCyan) mxColors.smBadge else mxColors.goldBright).copy(alpha = alpha),
-                        radius = p.radius,
-                        center = Offset(px, py)
-                    )
-                }
             } else {
-                // Sun mode crisp technical telemetry grid + bold amber racing corner accent
                 val gridStep = 44f
-                val gridColor = Color(0xFFCBD5E1).copy(alpha = 0.55f)
+                val gridColor = Color(0xFFCBD5E1).copy(alpha = 0.50f)
                 var gx = 0f
                 while (gx < w) {
                     drawLine(gridColor, Offset(gx, 0f), Offset(gx, h), strokeWidth = 1f)
@@ -271,12 +138,6 @@ fun CarbonStadiumBackdrop(
                     drawLine(gridColor, Offset(0f, gy), Offset(w, gy), strokeWidth = 1f)
                     gy += gridStep
                 }
-                drawLine(
-                    color = mxColors.goldAccent.copy(alpha = 0.25f),
-                    start = Offset(0f, 0f),
-                    end = Offset(w * 0.4f, 0f),
-                    strokeWidth = 6.dp.toPx()
-                )
             }
         }
         CompositionLocalProvider(LocalContentColor provides MaterialTheme.colorScheme.onBackground) {

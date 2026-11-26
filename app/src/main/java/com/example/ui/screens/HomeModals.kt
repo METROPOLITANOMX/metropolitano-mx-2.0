@@ -708,6 +708,7 @@ private fun SetupComparatorCard(
 @Composable
 fun AppGuideDialog(strings: MxStrings, onDismiss: () -> Unit) {
     val mx = LocalMxColors.current
+    val context = androidx.compose.ui.platform.LocalContext.current
     AlertDialog(
         onDismissRequest = onDismiss,
         containerColor = MaterialTheme.colorScheme.surface,
@@ -719,20 +720,36 @@ fun AppGuideDialog(strings: MxStrings, onDismiss: () -> Unit) {
                 text = if (strings.isSpanish) {
                     "1. Úsala en cualquier sitio: descampado, parking, el jardín de tu casa o circuito oficial para cronometrar tu Losi Promoto.\n" +
                         "2. Coloca un teléfono como Antena (Solo o con Dirección) apuntando a tu línea de paso.\n" +
-                        "3. Calibra pista vacía en Antena o desde Dirección y elige Cualquier Paso o Multi-Color CIE.\n" +
+                        "3. Calibra pista vacía en Antena o desde Dirección y elige Cualquier Paso, 1 Color o Multi-Color CIE.\n" +
                         "4. Rueda en Sala Pista con Modo Bolsillo (altavoz o cascos) mientras Dirección y boxes ven los tiempos en vivo.\n" +
-                        "5. ¿Quieres pasar a Circuito Oficial y obtener códigos de acceso? Escríbenos desde el Buzón."
+                        "5. Instalación desde Navegador Web: Android muestra aviso en cualquier APK fuera de Google Play Store. Pulsa 'Descargar de todos modos' al bajar desde el portal web.\n" +
+                        "6. ¿Quieres pasar a Circuito Oficial y obtener códigos? Escríbenos desde el Buzón."
                 } else {
                     "1. Use anywhere: open lot, parking spot, backyard, or official MX track to time your Losi Promoto.\n" +
                         "2. Place a phone as Antenna (Solo or with Director) aimed at your finish line.\n" +
-                        "3. Calibrate empty track on the Antenna or from Director, choosing Any Pass or CIE Multi-Color.\n" +
+                        "3. Calibrate empty track on the Antenna or from Director, choosing Any Pass, 1 Color, or CIE Multi-Color.\n" +
                         "4. Ride in Track Room with Pocket Mode (speaker or headset) while Director & pit-crew watch live.\n" +
-                        "5. Want to register as an Official Circuit and request invite codes? Message us via Inbox."
+                        "5. Browser Web Install: Android warns on all APKs outside Google Play Store. Tap 'Download anyway' when downloading from the web portal.\n" +
+                        "6. Want to register as an Official Circuit and request invite codes? Message us via Inbox."
                 },
                 style = MaterialTheme.typography.bodyMedium
             )
         },
-        confirmButton = { TextButton(onClick = onDismiss) { Text("OK", color = mx.goldAccent) } }
+        confirmButton = { TextButton(onClick = onDismiss) { Text("OK", color = mx.goldAccent) } },
+        dismissButton = {
+            TextButton(onClick = {
+                try {
+                    val intent = android.content.Intent(
+                        android.content.Intent.ACTION_VIEW,
+                        android.net.Uri.parse(com.example.data.model.MxConstants.DEFAULT_APK_URL)
+                    )
+                    context.startActivity(intent)
+                } catch (_: Exception) {
+                }
+            }) {
+                Text(if (strings.isSpanish) "Abrir Web Oficial" else "Open Web Installer", color = mx.smBadge)
+            }
+        }
     )
 }
 

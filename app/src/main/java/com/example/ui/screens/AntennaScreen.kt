@@ -1,9 +1,11 @@
 package com.example.ui.screens
 
 import android.Manifest
+import android.app.Activity
 import android.content.pm.PackageManager
 import android.os.SystemClock
 import android.view.ViewGroup
+import android.view.WindowManager
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.camera.core.CameraSelector
@@ -14,6 +16,7 @@ import androidx.camera.view.PreviewView
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -33,8 +36,11 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.VolumeOff
 import androidx.compose.material.icons.automirrored.filled.VolumeUp
+import androidx.compose.material.icons.filled.BatterySaver
 import androidx.compose.material.icons.filled.CameraAlt
 import androidx.compose.material.icons.filled.CenterFocusStrong
+import androidx.compose.material.icons.filled.CheckCircle
+import androidx.compose.material.icons.filled.LockOpen
 import androidx.compose.material.icons.filled.SwapHoriz
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -62,8 +68,11 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.content.ContextCompat
@@ -74,6 +83,7 @@ import com.example.data.model.DetectionMode
 import com.example.data.model.LabSample
 import com.example.data.model.LineOrientation
 import com.example.data.model.PassingDirection
+import com.example.data.model.SessionPhase
 import com.example.engine.CameraFpsHelper
 import com.example.engine.VisionTimingEngine
 import com.example.i18n.MxStrings
@@ -106,7 +116,43 @@ fun AntennaScreen(
 
     val scope = rememberCoroutineScope()
     var stationChosen by remember { mutableStateOf(false) }
+    var batterySaverBlackScreen by remember { mutableStateOf(false) }
+    var lastInteractionMonoMs by remember { mutableLongStateOf(SystemClock.elapsedRealtime()) }
+
+    fun touchActivity() {
+        lastInteractionMonoMs = SystemClock.elapsedRealtime()
+    }
+
     KeepScreenOnEffect(enabled = stationChosen)
+
+    LaunchedEffect(stationChosen) {
+        viewModel.setAntennaRoleActive(stationChosen)
+        if (stationChosen) touchActivity() else batterySaverBlackScreen = false
+    }
+
+    // 1-minute inactivity auto black battery-saver screen (camera & detection keep running)
+    LaunchedEffect(stationChosen, lastInteractionMonoMs) {
+        if (stationChosen) {
+            delay(60_000L)
+            batterySaverBlackScreen = true
+        }
+    }
+
+    // Dim screen brightness to minimum during OLED black battery-saver mode
+    DisposableEffect(batterySaverBlackScreen) {
+        val window = (context as? Activity)?.window
+        val attrs = window?.attributes
+        if (window != null && attrs != null) {
+            attrs.screenBrightness = if (batterySaverBlackScreen) 0.01f else WindowManager.LayoutParams.BRIGHTNESS_OVERRIDE_NONE
+            window.attributes = attrs
+        }
+        onDispose {
+            if (window != null && attrs != null) {
+                attrs.screenBrightness = WindowManager.LayoutParams.BRIGHTNESS_OVERRIDE_NONE
+                window.attributes = attrs
+            }
+        }
+    }
 
     var hasCameraPerm by remember {
         mutableStateOf(
@@ -125,20 +171,27 @@ fun AntennaScreen(
     var lastDetectedColors by remember { mutableStateOf<List<LabSample>>(emptyList()) }
     var lastDorsalHint by remember { mutableStateOf("") }
     var lastFpsEstimate by remember { mutableIntStateOf(30) }
-    var lastMatchConfidence by remember { mutableFloatStateOf(0f) }
     var localCalibrated by remember { mutableStateOf(false) }
     var calibratingCountdown by remember { mutableIntStateOf(0) }
     var cameraError by remember { mutableStateOf<String?>(null) }
     var boundProvider by remember { mutableStateOf<ProcessCameraProvider?>(null) }
 
-    val activeConfig = state.antennas[state.selectedAntennaStation.id]
+    val remoteConfig = state.antennas[state.selectedAntennaStation.id]
         ?: AntennaConfig(antennaId = state.selectedAntennaStation.id, circuitId = state.activeCircuit.id)
+    var localColorZoneX by remember(state.selectedAntennaStation.id) { mutableFloatStateOf(remoteConfig.colorZoneX) }
+    var localColorZoneY by remember(state.selectedAntennaStation.id) { mutableFloatStateOf(remoteConfig.colorZoneY) }
+    LaunchedEffect(remoteConfig.colorZoneX, remoteConfig.colorZoneY) {
+        localColorZoneX = remoteConfig.colorZoneX
+        localColorZoneY = remoteConfig.colorZoneY
+    }
+    val activeConfig = remoteConfig.copy(colorZoneX = localColorZoneX, colorZoneY = localColorZoneY)
 
     val latestConfig by rememberUpdatedState(activeConfig)
     val latestProfiles by rememberUpdatedState(state.colorProfiles)
     val latestStation by rememberUpdatedState(state.selectedAntennaStation)
     val latestIsSpanish by rememberUpdatedState(strings.isSpanish)
     val latestCalibrated by rememberUpdatedState(localCalibrated)
+    val latestRoomPhase by rememberUpdatedState(state.roomState.sessionPhase)
 
     LaunchedEffect(stationChosen, activeConfig.calibrateCommandAtMs) {
         if (stationChosen && activeConfig.calibrateCommandAtMs > lastHandledCalCmd && activeConfig.calibrateCommandAtMs > 0L) {
@@ -162,8 +215,19 @@ fun AntennaScreen(
         }
     }
 
+    // Periodic tick to auto-hide the capture toast pill after ~4s
+    var tickerMonoMs by remember { mutableLongStateOf(SystemClock.elapsedRealtime()) }
+    LaunchedEffect(state.lastCaptureFeedbackAtMs) {
+        if (state.lastCaptureFeedbackAtMs > 0L) {
+            tickerMonoMs = SystemClock.elapsedRealtime()
+            delay(4200L)
+            tickerMonoMs = SystemClock.elapsedRealtime()
+        }
+    }
+
     DisposableEffect(Unit) {
         onDispose {
+            viewModel.setAntennaRoleActive(false)
             try {
                 boundProvider?.unbindAll()
             } catch (_: Exception) {
@@ -196,7 +260,8 @@ fun AntennaScreen(
                 Text(
                     "${strings.antennaRemoteHint}\n${state.activeCircuit.name}",
                     style = MaterialTheme.typography.bodyMedium,
-                    color = mx.subtleText
+                    color = mx.subtleText,
+                    textAlign = TextAlign.Center
                 )
                 Spacer(Modifier.height(20.dp))
 
@@ -210,6 +275,7 @@ fun AntennaScreen(
                         onClick = {
                             viewModel.selectAntennaStation(station)
                             stationChosen = true
+                            touchActivity()
                             if (!hasCameraPerm) camPermLauncher.launch(Manifest.permission.CAMERA)
                         },
                         containerColor = mx.goldAccent,
@@ -235,7 +301,30 @@ fun AntennaScreen(
     }
 
     CompositionLocalProvider(LocalContentColor provides Color.White) {
-        Box(modifier = Modifier.fillMaxSize().background(Color.Black)) {
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(Color.Black)
+                .pointerInput(stationChosen, activeConfig.linePosition) {
+                    detectDragGestures(
+                        onDragStart = { touchActivity() },
+                        onDragEnd = {
+                            viewModel.updateRemoteAntennaConfig(
+                                latestStation.id,
+                                colorZoneX = localColorZoneX,
+                                colorZoneY = localColorZoneY
+                            )
+                        }
+                    ) { change, dragAmount ->
+                        change.consume()
+                        touchActivity()
+                        val w = size.width.toFloat().coerceAtLeast(1f)
+                        val h = size.height.toFloat().coerceAtLeast(1f)
+                        localColorZoneX = (localColorZoneX + dragAmount.x / w).coerceIn(0.15f, 0.85f)
+                        localColorZoneY = (localColorZoneY + dragAmount.y / h).coerceIn(0.18f, 0.82f)
+                    }
+                }
+        ) {
             if (hasCameraPerm) {
                 AndroidView(
                     factory = { ctx ->
@@ -253,13 +342,15 @@ fun AntennaScreen(
                                 try {
                                     val nowMono = SystemClock.elapsedRealtime()
                                     val sendSnap = (nowMono - lastSnapshotMonoMs.get()) > 1200L
+                                    val isWarmup = latestRoomPhase == SessionPhase.WARMUP
                                     val res = visionEngine.processFrame(
                                         image = imageProxy,
                                         config = latestConfig,
                                         profiles = latestProfiles,
                                         syncedNowMs = viewModel.syncedNowMs(),
                                         isSpanish = latestIsSpanish,
-                                        captureLiveSnapshot = sendSnap
+                                        captureLiveSnapshot = sendSnap,
+                                        extractColorsForWarmup = isWarmup
                                     )
                                     if (res != null) {
                                         lastFpsEstimate = res.estimatedFps
@@ -273,9 +364,12 @@ fun AntennaScreen(
                                             )
                                         }
                                         if (res.triggered) {
-                                            lastDetectedColors = res.detectedColors
+                                            lastDetectedColors = if (latestConfig.detectionMode == DetectionMode.ANY_PASS && !isWarmup) {
+                                                emptyList()
+                                            } else {
+                                                res.detectedColors
+                                            }
                                             lastDorsalHint = res.detectedDorsal
-                                            lastMatchConfidence = res.matchConfidence
                                             viewModel.handleVisionDetection(latestStation, res)
                                         }
                                     }
@@ -306,7 +400,6 @@ fun AntennaScreen(
                                         analysis
                                     )
                                 } catch (_: Exception) {
-                                    // Fallback without strict dual-stream FPS hint for older Camera2 HALs
                                     val fallbackPreview = Preview.Builder().build().also {
                                         it.surfaceProvider = previewView.surfaceProvider
                                     }
@@ -363,215 +456,386 @@ fun AntennaScreen(
                 }
             }
 
-            // Translucent ROI "Efecto Túnel" + Trigger Line Overlay (bright inside tunnel!)
+            // Full-Screen Finish Line + Independent Color Capture Zone Overlay
+            val showColorZone = activeConfig.detectionMode != DetectionMode.ANY_PASS ||
+                state.roomState.sessionPhase == SessionPhase.WARMUP
             Canvas(modifier = Modifier.fillMaxSize()) {
-                val roiW = size.width * activeConfig.roiSize.widthFrac
-                val roiH = size.height * activeConfig.roiSize.heightFrac
-                val roiLeft = (size.width - roiW) / 2f
-                val roiTop = (size.height * activeConfig.roiHeight.centerYFrac - roiH / 2f).coerceIn(0f, size.height - roiH)
-                val roiRight = roiLeft + roiW
-                val roiBottom = roiTop + roiH
-                val dim = Color.Black.copy(alpha = 0.24f)
+                // 1. Finish Line ("LÍNEA DE META") spanning the ENTIRE screen edge-to-edge
+                if (activeConfig.lineOrientation == LineOrientation.VERTICAL) {
+                    val lx = (size.width * activeConfig.linePosition).coerceIn(12f, size.width - 12f)
+                    drawLine(
+                        color = Color(0xFFE63946).copy(alpha = 0.35f),
+                        start = Offset(lx, 0f),
+                        end = Offset(lx, size.height),
+                        strokeWidth = 10.dp.toPx()
+                    )
+                    drawLine(
+                        color = Color(0xFFE63946),
+                        start = Offset(lx, 0f),
+                        end = Offset(lx, size.height),
+                        strokeWidth = 3.5.dp.toPx()
+                    )
+                } else {
+                    val ly = (size.height * activeConfig.linePosition).coerceIn(12f, size.height - 12f)
+                    drawLine(
+                        color = Color(0xFFE63946).copy(alpha = 0.35f),
+                        start = Offset(0f, ly),
+                        end = Offset(size.width, ly),
+                        strokeWidth = 10.dp.toPx()
+                    )
+                    drawLine(
+                        color = Color(0xFFE63946),
+                        start = Offset(0f, ly),
+                        end = Offset(size.width, ly),
+                        strokeWidth = 3.5.dp.toPx()
+                    )
+                }
 
-                // Dim ONLY outside the tunnel so the pass zone stays crystal clear
-                drawRect(dim, topLeft = Offset.Zero, size = Size(size.width, roiTop))
-                drawRect(dim, topLeft = Offset(0f, roiBottom), size = Size(size.width, (size.height - roiBottom).coerceAtLeast(0f)))
-                drawRect(dim, topLeft = Offset(0f, roiTop), size = Size(roiLeft, roiH))
-                drawRect(dim, topLeft = Offset(roiRight, roiTop), size = Size((size.width - roiRight).coerceAtLeast(0f), roiH))
+                // 2. Separate Color Zone ("ZONA COLOR") positioned independently
+                val zoneW = size.width * (activeConfig.roiSize.widthFrac * 0.55f).coerceIn(0.18f, 0.48f)
+                val zoneH = size.height * (activeConfig.roiSize.heightFrac * 0.55f).coerceIn(0.18f, 0.45f)
+                val zoneLeft = (size.width * localColorZoneX - zoneW / 2f).coerceIn(8f, size.width - zoneW - 8f)
+                val zoneTop = (size.height * localColorZoneY - zoneH / 2f).coerceIn(8f, size.height - zoneH - 8f)
 
+                val zoneColor = when {
+                    !showColorZone -> Color(0xFF38BDF8).copy(alpha = 0.35f)
+                    localCalibrated -> Color(0xFF00E5FF)
+                    else -> Color(0xFFF5B731)
+                }
                 drawRect(
-                    color = if (localCalibrated) Color(0xFF22C55E) else Color(0xFFF5B731),
-                    topLeft = Offset(roiLeft, roiTop),
-                    size = Size(roiW, roiH),
-                    style = Stroke(width = 4.dp.toPx())
-                )
-
-            // Trigger Line
-            if (activeConfig.lineOrientation == LineOrientation.VERTICAL) {
-                val lx = roiLeft + roiW * activeConfig.linePosition
-                drawLine(
-                    color = Color(0xFFE63946),
-                    start = Offset(lx, roiTop),
-                    end = Offset(lx, roiTop + roiH),
-                    strokeWidth = 4.dp.toPx()
-                )
-            } else {
-                val ly = roiTop + roiH * activeConfig.linePosition
-                drawLine(
-                    color = Color(0xFFE63946),
-                    start = Offset(roiLeft, ly),
-                    end = Offset(roiLeft + roiW, ly),
-                    strokeWidth = 4.dp.toPx()
+                    color = zoneColor,
+                    topLeft = Offset(zoneLeft, zoneTop),
+                    size = Size(zoneW, zoneH),
+                    style = Stroke(width = if (showColorZone) 3.5.dp.toPx() else 2.dp.toPx())
                 )
             }
-        }
 
-        // Top HUD: Connection Status + Sync Diagnostics + Local/Remote Controls
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .statusBarsPadding()
-                .padding(14.dp)
-                .align(Alignment.TopCenter),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            GlassRaceCard(modifier = Modifier.weight(1f)) {
-                Column(modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp)) {
-                    Text(
-                        text = "${state.selectedAntennaStation.name} • ${state.activeCircuit.name}",
-                        style = MaterialTheme.typography.titleMedium,
-                        color = mx.goldAccent,
-                        maxLines = 1
-                    )
-                    Text(
-                        text = if (!localCalibrated) {
-                            if (strings.isSpanish) "CONECTADA • Falta calibrar (${lastFpsEstimate}fps)"
-                            else "ONLINE • Ready to calibrate (${lastFpsEstimate}fps)"
-                        } else {
-                            val modeLabel = when (activeConfig.detectionMode) {
-                                DetectionMode.FAIRING_COLOR -> "CIE Lab"
-                                DetectionMode.SINGLE_COLOR -> if (strings.isSpanish) "1 Color" else "Single Color"
-                                DetectionMode.ANY_PASS -> if (strings.isSpanish) "Cualq. Paso" else "Any Pass"
-                            }
-                            val dirLabel = if (activeConfig.directionFilter != PassingDirection.ANY) " • ${activeConfig.directionFilter.name.take(5)}" else ""
-                            val aiLabel = if (activeConfig.aiStewardEnabled) " • IA" else ""
-                            val dorsalPart = if (lastDorsalHint.isNotBlank()) " • #$lastDorsalHint" else ""
-                            "${if (strings.isSpanish) "LISTA" else "READY"} • ${lastFpsEstimate}fps • $modeLabel$dirLabel$aiLabel$dorsalPart"
-                        },
-                        style = MaterialTheme.typography.labelSmall,
-                        color = if (localCalibrated) mx.telemetryGreen else mx.goldBright
-                    )
-                    Text(
-                        text = if (state.antennaSyncOk) {
-                            if (strings.isSpanish) "Nube OK • ${state.antennaUploadCount} envíos • Pantalla fija"
-                            else "Cloud OK • ${state.antennaUploadCount} syncs • Screen Awake"
-                        } else {
-                            "Error nube: ${state.antennaLastSyncError ?: "sin red"}"
-                        },
-                        style = MaterialTheme.typography.labelSmall,
-                        color = if (state.antennaSyncOk) mx.telemetryGreen else mx.racingRed
-                    )
-                }
+            // Legend pills for Full-Screen Finish Line & Draggable Color Zone
+            Row(
+                modifier = Modifier
+                    .align(Alignment.Center)
+                    .padding(top = 180.dp)
+                    .clip(RoundedCornerShape(999.dp))
+                    .background(Color.Black.copy(alpha = 0.52f))
+                    .padding(horizontal = 12.dp, vertical = 4.dp),
+                horizontalArrangement = Arrangement.spacedBy(10.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = if (strings.isSpanish) "━ META PANTALLA COMPLETA" else "━ FULL-SCREEN FINISH",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = mx.racingRed,
+                    fontWeight = FontWeight.Bold
+                )
+                Text(
+                    text = if (showColorZone) {
+                        if (strings.isSpanish) "▢ ARRASTRA ZONA COLOR" else "▢ DRAG COLOR ZONE"
+                    } else {
+                        if (strings.isSpanish) "▢ CUALQ. PASO (SIN COLOR)" else "▢ ANY PASS (TIMING ONLY)"
+                    },
+                    style = MaterialTheme.typography.labelSmall,
+                    color = Color(0xFF00E5FF),
+                    fontWeight = FontWeight.Bold
+                )
             }
 
-            Spacer(Modifier.width(6.dp))
-
-            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                IconButton(
-                    onClick = { viewModel.toggleAntennaVoice() },
-                    modifier = Modifier
-                        .clip(CircleShape)
-                        .background(Color.Black.copy(alpha = 0.65f))
-                        .minimumInteractiveComponentSize()
-                        .testTag("antenna_voice_toggle")
+            // Top HUD: Connection Status + Sync Diagnostics + Local/Remote Controls
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .statusBarsPadding()
+                    .padding(14.dp)
+                    .align(Alignment.TopCenter),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Icon(
-                        imageVector = if (state.antennaVoiceEnabled) Icons.AutoMirrored.Filled.VolumeUp else Icons.AutoMirrored.Filled.VolumeOff,
-                        contentDescription = if (state.antennaVoiceEnabled) strings.voiceOn else strings.voiceOff,
-                        tint = Color.White
-                    )
-                }
-                IconButton(
-                    onClick = { stationChosen = false },
-                    modifier = Modifier
-                        .clip(CircleShape)
-                        .background(Color.Black.copy(alpha = 0.65f))
-                        .minimumInteractiveComponentSize()
-                        .testTag("antenna_change_station")
-                ) {
-                    Icon(Icons.Default.SwapHoriz, contentDescription = "Station", tint = Color.White)
-                }
-                IconButton(
-                    onClick = onBack,
-                    modifier = Modifier
-                        .clip(CircleShape)
-                        .background(Color.Black.copy(alpha = 0.65f))
-                        .minimumInteractiveComponentSize()
-                        .testTag("antenna_exit_button")
-                ) {
-                    Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Exit", tint = Color.White)
-                }
-            }
-        }
-
-        // Bottom local calibration & detected colors readout
-        Column(
-            modifier = Modifier
-                .align(Alignment.BottomCenter)
-                .fillMaxWidth()
-                .navigationBarsPadding()
-                .padding(14.dp),
-            verticalArrangement = Arrangement.spacedBy(8.dp),
-            horizontalAlignment = Alignment.CenterHorizontally
-        ) {
-            if (lastDetectedColors.isNotEmpty()) {
-                GlassRaceCard {
-                    Row(
-                        modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(10.dp)
-                    ) {
-                        lastDetectedColors.forEach { sample ->
-                            val c = try { Color(android.graphics.Color.parseColor(sample.hex)) } catch (_: Exception) { Color.White }
-                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                Box(
-                                    modifier = Modifier
-                                        .size(16.dp)
-                                        .clip(CircleShape)
-                                        .background(c)
-                                        .border(1.dp, Color.White, CircleShape)
-                                )
-                                Spacer(Modifier.width(4.dp))
-                                Text(
-                                    sample.colorName,
-                                    style = MaterialTheme.typography.labelMedium,
-                                    color = MaterialTheme.colorScheme.onSurface
-                                )
-                            }
-                        }
-                    }
-                }
-            }
-
-            val calBtnBg = if (localCalibrated) mx.telemetryGreen else mx.goldAccent
-            Mx3dButton(
-                onClick = {
-                    if (calibratingCountdown > 0) return@Mx3dButton
-                    scope.launch {
-                        for (s in 3 downTo 1) {
-                            calibratingCountdown = s
-                            if (state.antennaVoiceEnabled) viewModel.voiceEngine.speak(s.toString())
-                            delay(1000L)
-                        }
-                        calibratingCountdown = 0
-                        visionEngine.requestLocalCalibration()
-                        localCalibrated = true
-                        viewModel.calibrateAntennaLocally(state.selectedAntennaStation)
-                        if (state.antennaVoiceEnabled) {
-                            viewModel.voiceEngine.speak(
-                                if (strings.isSpanish) "Antena calibrada y lista" else "Antenna calibrated and ready"
+                    GlassRaceCard(modifier = Modifier.weight(1f)) {
+                        Column(modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp)) {
+                            Text(
+                                text = "${state.selectedAntennaStation.name} • ${state.activeCircuit.name}",
+                                style = MaterialTheme.typography.titleMedium,
+                                color = mx.goldAccent,
+                                maxLines = 1
+                            )
+                            Text(
+                                text = if (!localCalibrated) {
+                                    if (strings.isSpanish) "CONECTADA • Falta calibrar (${lastFpsEstimate}fps)"
+                                    else "ONLINE • Ready to calibrate (${lastFpsEstimate}fps)"
+                                } else {
+                                    val modeLabel = when (activeConfig.detectionMode) {
+                                        DetectionMode.FAIRING_COLOR -> "Multi-Color CIE"
+                                        DetectionMode.SINGLE_COLOR -> if (strings.isSpanish) {
+                                            "1 Color${if (activeConfig.singleTargetColorName.isNotBlank()) " (${activeConfig.singleTargetColorName})" else ""}"
+                                        } else "1 Color"
+                                        DetectionMode.ANY_PASS -> if (strings.isSpanish) "Cualq. Paso" else "Any Pass"
+                                    }
+                                    val dirLabel = if (activeConfig.directionFilter != PassingDirection.ANY) " • ${activeConfig.directionFilter.name.take(5)}" else ""
+                                    val dorsalPart = if (lastDorsalHint.isNotBlank()) " • #$lastDorsalHint" else ""
+                                    "${if (strings.isSpanish) "LISTA" else "READY"} • ${lastFpsEstimate}fps • $modeLabel$dirLabel$dorsalPart"
+                                },
+                                style = MaterialTheme.typography.labelSmall,
+                                color = if (localCalibrated) mx.telemetryGreen else mx.goldBright
+                            )
+                            Text(
+                                text = if (state.antennaSyncOk) {
+                                    val raceNote = if (state.roomState.sessionPhase != SessionPhase.IDLE) {
+                                        if (strings.isSpanish) " • Silencio Carrera" else " • Race Silent"
+                                    } else ""
+                                    if (strings.isSpanish) "Envío OK (${state.antennaUploadCount})$raceNote"
+                                    else "Sync OK (${state.antennaUploadCount})$raceNote"
+                                } else {
+                                    "Error nube: ${state.antennaLastSyncError ?: "sin red"}"
+                                },
+                                style = MaterialTheme.typography.labelSmall,
+                                color = if (state.antennaSyncOk) mx.telemetryGreen else mx.racingRed,
+                                maxLines = 2
                             )
                         }
                     }
-                },
-                containerColor = calBtnBg,
-                contentColor = contrastTextOn(calBtnBg),
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .testTag("antenna_local_calibrate_button")
-            ) {
-                Icon(Icons.Default.CenterFocusStrong, contentDescription = null)
-                Spacer(Modifier.width(8.dp))
-                Text(
-                    when {
-                        calibratingCountdown > 0 -> "${calibratingCountdown}s..."
-                        localCalibrated -> if (strings.isSpanish) "Recalibrar Aquí (3s)" else "Recalibrate Here (3s)"
-                        else -> if (strings.isSpanish) "Calibrar Aquí (3s) — O desde Dirección" else "Calibrate Here (3s) — Or from Director"
+
+                    Spacer(Modifier.width(6.dp))
+
+                    Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                        IconButton(
+                            onClick = {
+                                touchActivity()
+                                batterySaverBlackScreen = true
+                            },
+                            modifier = Modifier
+                                .clip(CircleShape)
+                                .background(Color.Black.copy(alpha = 0.65f))
+                                .minimumInteractiveComponentSize()
+                                .testTag("antenna_battery_black_btn")
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.BatterySaver,
+                                contentDescription = if (strings.isSpanish) "Pantalla Negra Ahorro" else "Black Battery Screen",
+                                tint = mx.goldAccent
+                            )
+                        }
+                        IconButton(
+                            onClick = {
+                                touchActivity()
+                                viewModel.toggleAntennaVoice()
+                            },
+                            modifier = Modifier
+                                .clip(CircleShape)
+                                .background(Color.Black.copy(alpha = 0.65f))
+                                .minimumInteractiveComponentSize()
+                                .testTag("antenna_voice_toggle")
+                        ) {
+                            Icon(
+                                imageVector = if (state.antennaVoiceEnabled) Icons.AutoMirrored.Filled.VolumeUp else Icons.AutoMirrored.Filled.VolumeOff,
+                                contentDescription = if (state.antennaVoiceEnabled) strings.voiceOn else strings.voiceOff,
+                                tint = Color.White
+                            )
+                        }
+                        IconButton(
+                            onClick = {
+                                touchActivity()
+                                stationChosen = false
+                            },
+                            modifier = Modifier
+                                .clip(CircleShape)
+                                .background(Color.Black.copy(alpha = 0.65f))
+                                .minimumInteractiveComponentSize()
+                                .testTag("antenna_change_station")
+                        ) {
+                            Icon(Icons.Default.SwapHoriz, contentDescription = "Station", tint = Color.White)
+                        }
+                        IconButton(
+                            onClick = {
+                                touchActivity()
+                                onBack()
+                            },
+                            modifier = Modifier
+                                .clip(CircleShape)
+                                .background(Color.Black.copy(alpha = 0.65f))
+                                .minimumInteractiveComponentSize()
+                                .testTag("antenna_exit_button")
+                        ) {
+                            Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Exit", tint = Color.White)
+                        }
                     }
-                )
+                }
+
+                // "Captura enviada" banner for ~4s after every pass detection
+                val showCaptureBanner = state.lastCaptureFeedback != null &&
+                    (tickerMonoMs - state.lastCaptureFeedbackAtMs) in 0L..4200L
+                if (showCaptureBanner) {
+                    Row(
+                        modifier = Modifier
+                            .align(Alignment.CenterHorizontally)
+                            .clip(RoundedCornerShape(999.dp))
+                            .background(
+                                (if (state.lastCaptureOk) Color(0xFF14532D) else Color(0xFF7F1D1D)).copy(alpha = 0.92f)
+                            )
+                            .border(
+                                1.5.dp,
+                                if (state.lastCaptureOk) mx.telemetryGreen else mx.racingRed,
+                                RoundedCornerShape(999.dp)
+                            )
+                            .padding(horizontal = 16.dp, vertical = 8.dp)
+                            .testTag("antenna_capture_feedback_pill"),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Icon(
+                            Icons.Default.CheckCircle,
+                            contentDescription = null,
+                            tint = if (state.lastCaptureOk) mx.telemetryGreen else mx.goldBright,
+                            modifier = Modifier.size(18.dp)
+                        )
+                        Text(
+                            text = state.lastCaptureFeedback.orEmpty(),
+                            style = MaterialTheme.typography.labelLarge,
+                            color = Color.White,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
+                }
+            }
+
+            // Bottom local calibration & detected colors readout
+            Column(
+                modifier = Modifier
+                    .align(Alignment.BottomCenter)
+                    .fillMaxWidth()
+                    .navigationBarsPadding()
+                    .padding(14.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+                horizontalAlignment = Alignment.CenterHorizontally
+            ) {
+                if (lastDetectedColors.isNotEmpty()) {
+                    GlassRaceCard {
+                        Row(
+                            modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(10.dp)
+                        ) {
+                            lastDetectedColors.forEach { sample ->
+                                val c = try { Color(android.graphics.Color.parseColor(sample.hex)) } catch (_: Exception) { Color.White }
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Box(
+                                        modifier = Modifier
+                                            .size(16.dp)
+                                            .clip(CircleShape)
+                                            .background(c)
+                                            .border(1.dp, Color.White, CircleShape)
+                                    )
+                                    Spacer(Modifier.width(4.dp))
+                                    Text(
+                                        sample.colorName,
+                                        style = MaterialTheme.typography.labelMedium,
+                                        color = MaterialTheme.colorScheme.onSurface
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+
+                val calBtnBg = if (localCalibrated) mx.telemetryGreen else mx.goldAccent
+                Mx3dButton(
+                    onClick = {
+                        touchActivity()
+                        if (calibratingCountdown > 0) return@Mx3dButton
+                        scope.launch {
+                            for (s in 3 downTo 1) {
+                                calibratingCountdown = s
+                                if (state.antennaVoiceEnabled) viewModel.voiceEngine.speak(s.toString())
+                                delay(1000L)
+                            }
+                            calibratingCountdown = 0
+                            visionEngine.requestLocalCalibration()
+                            localCalibrated = true
+                            viewModel.calibrateAntennaLocally(state.selectedAntennaStation)
+                            if (state.antennaVoiceEnabled) {
+                                viewModel.voiceEngine.speak(
+                                    if (strings.isSpanish) "Antena calibrada y lista" else "Antenna calibrated and ready"
+                                )
+                            }
+                        }
+                    },
+                    containerColor = calBtnBg,
+                    contentColor = contrastTextOn(calBtnBg),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .testTag("antenna_local_calibrate_button")
+                ) {
+                    Icon(Icons.Default.CenterFocusStrong, contentDescription = null)
+                    Spacer(Modifier.width(8.dp))
+                    Text(
+                        when {
+                            calibratingCountdown > 0 -> "${calibratingCountdown}s..."
+                            localCalibrated -> if (strings.isSpanish) "Recalibrar Aquí (3s)" else "Recalibrate Here (3s)"
+                            else -> if (strings.isSpanish) "Calibrar Aquí (3s) — O desde Dirección" else "Calibrate Here (3s) — Or from Director"
+                        }
+                    )
+                }
+            }
+
+            // OLED Battery Saver Pure Black Overlay (CameraX stays 100% active underneath!)
+            if (batterySaverBlackScreen) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .background(Color.Black)
+                        .padding(24.dp),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Column(
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.spacedBy(16.dp)
+                    ) {
+                        Icon(
+                            Icons.Default.BatterySaver,
+                            contentDescription = null,
+                            tint = Color(0xFF4B5563),
+                            modifier = Modifier.size(44.dp)
+                        )
+                        Text(
+                            text = if (strings.isSpanish) "ANTENA ACTIVA • AHORRO BATERÍA" else "ANTENNA RUNNING • BATTERY SAVER",
+                            style = MaterialTheme.typography.titleMedium,
+                            color = Color(0xFF9CA3AF),
+                            textAlign = TextAlign.Center
+                        )
+                        Text(
+                            text = "${state.selectedAntennaStation.name} • $lastFpsEstimate FPS • ${state.antennaUploadCount} envíos",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = Color(0xFF6B7280),
+                            textAlign = TextAlign.Center
+                        )
+                        if (state.lastCaptureFeedback != null && (tickerMonoMs - state.lastCaptureFeedbackAtMs) in 0L..5000L) {
+                            Text(
+                                text = state.lastCaptureFeedback.orEmpty(),
+                                style = MaterialTheme.typography.labelLarge,
+                                color = if (state.lastCaptureOk) Color(0xFF4ADE80) else Color(0xFFF87171)
+                            )
+                        }
+                        Spacer(Modifier.height(12.dp))
+                        Mx3dButton(
+                            onClick = {
+                                touchActivity()
+                                batterySaverBlackScreen = false
+                            },
+                            containerColor = Color(0xFF1F2937),
+                            contentColor = Color.White,
+                            modifier = Modifier
+                                .fillMaxWidth(0.75f)
+                                .testTag("antenna_unlock_black_screen")
+                        ) {
+                            Icon(Icons.Default.LockOpen, contentDescription = null)
+                            Spacer(Modifier.width(8.dp))
+                            Text(if (strings.isSpanish) "Desbloquear Pantalla" else "Unlock Screen")
+                        }
+                    }
+                }
             }
         }
-    }
     }
 }

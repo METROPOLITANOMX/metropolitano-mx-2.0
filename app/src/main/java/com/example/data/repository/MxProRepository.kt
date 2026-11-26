@@ -142,13 +142,47 @@ class MxProRepository(
         return rtdb.deleteBike(bikeId)
     }
 
-    suspend fun getRoom(circuitId: String): RoomState = rtdb.fetchRoom(circuitId)
-    suspend fun saveRoom(room: RoomState): Boolean = rtdb.saveRoom(room)
-    suspend fun upsertRoomRider(circuitId: String, rider: ActiveRoomRider): Boolean =
-        rtdb.upsertRoomRider(circuitId, rider)
+    suspend fun getRoom(circuitId: String): RoomState {
+        val remote = rtdb.fetchRoom(circuitId)
+        val cached = loadObjectCache<RoomState>("room_$circuitId")
+        if (rtdb.isOnline) {
+            if (cached != null && cached.updatedAtMs > remote.updatedAtMs) {
+                return cached
+            }
+            saveObjectCache("room_$circuitId", remote)
+            return remote
+        }
+        return cached ?: remote
+    }
 
-    suspend fun deleteRoomRider(circuitId: String, riderId: String): Boolean =
-        rtdb.deleteRoomRider(circuitId, riderId)
+    suspend fun saveRoom(room: RoomState): Boolean {
+        saveObjectCache("room_${room.circuitId}", room)
+        return rtdb.saveRoom(room)
+    }
+
+    suspend fun upsertRoomRider(circuitId: String, rider: ActiveRoomRider): Boolean {
+        val cached = loadObjectCache<RoomState>("room_$circuitId") ?: RoomState(circuitId = circuitId)
+        val merged = cached.copy(
+            activeRiders = cached.activeRiders + (rider.riderId to rider),
+            updatedAtMs = maxOf(cached.updatedAtMs, rtdb.syncedNowMs())
+        )
+        saveObjectCache("room_$circuitId", merged)
+        return rtdb.upsertRoomRider(circuitId, rider)
+    }
+
+    suspend fun deleteRoomRider(circuitId: String, riderId: String): Boolean {
+        val cached = loadObjectCache<RoomState>("room_$circuitId")
+        if (cached != null) {
+            saveObjectCache(
+                "room_$circuitId",
+                cached.copy(
+                    activeRiders = cached.activeRiders - riderId,
+                    updatedAtMs = maxOf(cached.updatedAtMs, rtdb.syncedNowMs())
+                )
+            )
+        }
+        return rtdb.deleteRoomRider(circuitId, riderId)
+    }
 
     suspend fun getCircuitLaps(circuitId: String): List<LapRecord> {
         val remote = rtdb.fetchCircuitLaps(circuitId)

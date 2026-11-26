@@ -223,7 +223,10 @@ fun LiveFanScreen(
             FlagAndRecordFrameOverlay(
                 flagState = state.roomState.flagState,
                 lastHotlapAtMs = lastHotlapAtMs,
-                nowMs = liveNowMs
+                nowMs = liveNowMs,
+                sessionPhase = state.roomState.sessionPhase,
+                phaseStartTimeMs = state.roomState.phaseStartTimeMs,
+                isSpanish = strings.isSpanish
             )
         }
         return
@@ -493,7 +496,10 @@ fun LiveFanScreen(
             FlagAndRecordFrameOverlay(
                 flagState = state.roomState.flagState,
                 lastHotlapAtMs = lastHotlapAtMs,
-                nowMs = liveNowMs
+                nowMs = liveNowMs,
+                sessionPhase = state.roomState.sessionPhase,
+                phaseStartTimeMs = state.roomState.phaseStartTimeMs,
+                isSpanish = strings.isSpanish
             )
         }
     }

@@ -9,6 +9,7 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -56,6 +57,7 @@ import androidx.compose.material3.Tab
 import androidx.compose.material3.Text
 import androidx.compose.material3.minimumInteractiveComponentSize
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
@@ -91,6 +93,7 @@ import com.example.data.model.RoiHeight
 import com.example.data.model.RoiSize
 import com.example.data.model.SessionPhase
 import com.example.data.model.formatLapMs
+import com.example.data.model.predefinedMotoColors
 import com.example.i18n.MxStrings
 import com.example.ui.components.AnimatedCheckeredRibbon
 import com.example.ui.components.Base64ImageView
@@ -136,6 +139,10 @@ fun DirectorScreen(
     ) {}
 
     var liveNowMs by remember { mutableLongStateOf(viewModel.syncedNowMs()) }
+    DisposableEffect(Unit) {
+        viewModel.startDirectorLanBridge()
+        onDispose { viewModel.stopDirectorLanBridge() }
+    }
     LaunchedEffect(Unit) {
         viewModel.refreshDirectorDashboard()
         while (true) {
@@ -159,13 +166,13 @@ fun DirectorScreen(
     if (state.roomState.sessionPhase == SessionPhase.COUNTDOWN_30 &&
         state.roomState.phaseEndTimeMs > liveNowMs
     ) {
-        val remSec = ((state.roomState.phaseEndTimeMs - liveNowMs) / 1000L).toInt().coerceAtLeast(0)
+        val remSec = ((state.roomState.phaseEndTimeMs - liveNowMs + 200L) / 1000L).toInt().coerceAtLeast(0)
         val litCount = when {
             remSec <= 1 -> 5
             remSec <= 3 -> 4
             remSec <= 6 -> 3
             remSec <= 10 -> 2
-            remSec <= 16 -> 1
+            remSec <= 20 -> 1
             else -> 0
         }
         Box(
@@ -199,8 +206,14 @@ fun DirectorScreen(
                     isSpanish = strings.isSpanish,
                     modifier = Modifier.padding(horizontal = 24.dp)
                 )
-                OutlinedButton(onClick = { viewModel.resetHeat() }) {
-                    Text(if (strings.isSpanish) "Cancelar Semáforo" else "Cancel Start Gate", color = Color.White)
+                Mx3dButton(
+                    onClick = { viewModel.stopSession(isDirector = true) },
+                    containerColor = mx.racingRed,
+                    contentColor = Color.White
+                ) {
+                    Icon(Icons.Default.Stop, contentDescription = null)
+                    Spacer(Modifier.width(6.dp))
+                    Text(if (strings.isSpanish) "STOP SEMÁFORO" else "STOP START GATE")
                 }
             }
         }
@@ -351,6 +364,56 @@ fun DirectorScreen(
                     }
                 }
 
+                // Persistent Active Session Bar (Countdown + STOP visible on ALL 5 tabs)
+                val activeRoom = state.roomState
+                if (activeRoom.sessionPhase != SessionPhase.IDLE) {
+                    val remSec = if (activeRoom.phaseEndTimeMs > liveNowMs) {
+                        ((activeRoom.phaseEndTimeMs - liveNowMs) / 1000L).toInt().coerceAtLeast(0)
+                    } else 0
+                    val phaseTag = when (activeRoom.sessionPhase) {
+                        SessionPhase.WARMUP -> "WARM-UP"
+                        SessionPhase.RACING -> if (strings.isSpanish) "CARRERA" else "RACING"
+                        SessionPhase.RANDOM_GATE -> if (strings.isSpanish) "VALLA MX" else "MX GATE"
+                        SessionPhase.PAUSED_YELLOW -> if (strings.isSpanish) "B. AMARILLA" else "YELLOW FLAG"
+                        else -> activeRoom.sessionPhase.name
+                    }
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 16.dp, vertical = 4.dp)
+                            .clip(RoundedCornerShape(12.dp))
+                            .background(mx.racingRed.copy(alpha = 0.18f))
+                            .border(1.dp, mx.racingRed, RoundedCornerShape(12.dp))
+                            .padding(horizontal = 12.dp, vertical = 6.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.weight(1f)) {
+                            PulsingLiveDot()
+                            Spacer(Modifier.width(8.dp))
+                            val clockStr = if (activeRoom.phaseEndTimeMs > 0L) {
+                                " • %d:%02d".format(remSec / 60, remSec % 60)
+                            } else ""
+                            Text(
+                                text = "$phaseTag$clockStr",
+                                style = MaterialTheme.typography.titleSmall,
+                                color = mx.goldBright,
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
+                        Mx3dButton(
+                            onClick = { viewModel.stopSession(isDirector = true) },
+                            containerColor = mx.racingRed,
+                            contentColor = Color.White,
+                            modifier = Modifier.testTag("director_top_stop_btn")
+                        ) {
+                            Icon(Icons.Default.Stop, contentDescription = null, modifier = Modifier.size(16.dp))
+                            Spacer(Modifier.width(4.dp))
+                            Text("STOP", style = MaterialTheme.typography.labelLarge, maxLines = 1)
+                        }
+                    }
+                }
+
                 BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
                     val isLandscapeSplit = maxWidth >= 600.dp
                     if (isLandscapeSplit) {
@@ -477,7 +540,10 @@ fun DirectorScreen(
             FlagAndRecordFrameOverlay(
                 flagState = state.roomState.flagState,
                 lastHotlapAtMs = lastHotlapAtMs,
-                nowMs = liveNowMs
+                nowMs = liveNowMs,
+                sessionPhase = state.roomState.sessionPhase,
+                phaseStartTimeMs = state.roomState.phaseStartTimeMs,
+                isSpanish = strings.isSpanish
             )
         }
     }
@@ -541,6 +607,8 @@ private fun DirectorRoomControlTab(
                         }
                     }
                 }
+                val myDirRoomRider = state.currentRider?.let { room.activeRiders[it.id] }
+                val myDirChronoRunning = (myDirRoomRider?.lastPassTimestampMs ?: 0L) > 0L
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
                     Mx3dOutlinedButton(
                         enabled = state.currentRider != null,
@@ -551,9 +619,23 @@ private fun DirectorRoomControlTab(
                         Icon(Icons.Default.TouchApp, contentDescription = null, modifier = Modifier.size(16.dp), tint = mx.goldAccent)
                         Spacer(Modifier.width(4.dp))
                         Text(
-                            state.currentRider?.let { "${strings.manualLap} (${it.name})" } ?: strings.manualLap,
+                            if (myDirChronoRunning) {
+                                state.currentRider?.let { "${strings.manualLap} (${it.name})" } ?: strings.manualLap
+                            } else {
+                                if (strings.isSpanish) "Iniciar Crono" else "Start Timer"
+                            },
                             maxLines = 1
                         )
+                    }
+                    Mx3dButton(
+                        enabled = myDirChronoRunning,
+                        onClick = { viewModel.stopManualChronoForCurrentRider() },
+                        containerColor = mx.racingRed,
+                        contentColor = Color.White
+                    ) {
+                        Icon(Icons.Default.Stop, contentDescription = null, modifier = Modifier.size(16.dp))
+                        Spacer(Modifier.width(3.dp))
+                        Text("STOP", maxLines = 1)
                     }
                     Mx3dButton(
                         enabled = state.currentRider != null,
@@ -565,7 +647,7 @@ private fun DirectorRoomControlTab(
                         contentColor = contrastTextOn(mx.smBadge),
                         modifier = Modifier.weight(1f).testTag("director_jump_pilot_btn")
                     ) {
-                        Text(if (strings.isSpanish) "Ir a Mi Sala Piloto" else "Open Rider Room", maxLines = 1)
+                        Text(if (strings.isSpanish) "Ir a Piloto" else "Rider Room", maxLines = 1)
                     }
                 }
             }
@@ -614,7 +696,7 @@ private fun DirectorRoomControlTab(
                         }
                     }
                     Mx3dButton(
-                        onClick = { viewModel.stopSession() },
+                        onClick = { viewModel.stopSession(isDirector = true) },
                         containerColor = mx.racingRed,
                         contentColor = Color.White,
                         modifier = Modifier
@@ -636,6 +718,7 @@ private fun DirectorRoomControlTab(
             }
         }
 
+        val sessionBusy = room.sessionPhase != SessionPhase.IDLE
         GlassRaceCard {
             Column(modifier = Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Text(if (strings.isSpanish) "Modo de Juego" else "Game Mode", style = MaterialTheme.typography.titleMedium, color = mx.goldAccent)
@@ -643,6 +726,7 @@ private fun DirectorRoomControlTab(
                     items(GameMode.entries) { gm ->
                         FilterChip(
                             selected = room.gameMode == gm,
+                            enabled = !sessionBusy,
                             onClick = { viewModel.updateRoomSettings(gameMode = gm) },
                             label = { Text(gm.name.replace("_", " ")) },
                             colors = mxChipColors()
@@ -655,6 +739,7 @@ private fun DirectorRoomControlTab(
                     listOf(180, 300, 480, 600).forEach { sec ->
                         FilterChip(
                             selected = room.heatDurationSec == sec,
+                            enabled = !sessionBusy,
                             onClick = { viewModel.updateRoomSettings(heatDurationSec = sec) },
                             label = { Text("${sec / 60}m") },
                             colors = mxChipColors()
@@ -678,12 +763,14 @@ private fun DirectorRoomControlTab(
 
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
             Mx3dButton(
+                enabled = !sessionBusy,
                 onClick = { viewModel.startWarmup(friendly = false) },
                 containerColor = mx.goldAccent,
                 contentColor = contrastTextOn(mx.goldAccent),
                 modifier = Modifier.weight(1f).testTag("director_warmup_btn")
             ) { Text(strings.startWarmup, maxLines = 1) }
             Mx3dButton(
+                enabled = !sessionBusy,
                 onClick = { viewModel.start30sCountdown(friendly = false) },
                 containerColor = mx.racingRed,
                 contentColor = Color.White,
@@ -693,6 +780,7 @@ private fun DirectorRoomControlTab(
 
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
             Mx3dOutlinedButton(
+                enabled = !sessionBusy,
                 onClick = { viewModel.startRandomMxGate(friendly = false) },
                 borderColor = mx.smBadge,
                 modifier = Modifier.weight(1f)
@@ -874,11 +962,20 @@ private fun DirectorAntennaCameraPreviewCard(
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically
         ) {
-            Text(
-                text = "${if (strings.isSpanish) "Circuito" else "Circuit"}: ${state.activeCircuit.name}",
-                style = MaterialTheme.typography.labelMedium,
-                color = mx.subtleText
-            )
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = "${if (strings.isSpanish) "Circuito" else "Circuit"}: ${state.activeCircuit.name}",
+                    style = MaterialTheme.typography.labelMedium,
+                    color = mx.subtleText
+                )
+                state.directorLanEndpoint?.let { ep ->
+                    Text(
+                        text = if (strings.isSpanish) "Wi-Fi / Hotspot Directo activo: $ep" else "Direct Wi-Fi / Hotspot bridge: $ep",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = mx.telemetryGreen
+                    )
+                }
+            }
             IconButton(onClick = { viewModel.refreshAntennasAndCaptures() }) {
                 Icon(Icons.Default.Refresh, contentDescription = "Refresh", tint = mx.goldAccent)
             }
@@ -948,23 +1045,25 @@ private fun DirectorAntennaCameraPreviewCard(
                             modifier = Modifier.fillMaxSize()
                         )
                         Canvas(modifier = Modifier.fillMaxSize()) {
-                            val roiW = size.width * cfg.roiSize.widthFrac
-                            val roiH = size.height * cfg.roiSize.heightFrac
-                            val roiLeft = (size.width - roiW) / 2f
-                            val roiTop = (size.height * cfg.roiHeight.centerYFrac - roiH / 2f).coerceIn(0f, size.height - roiH)
+                            // Full-Screen Finish Line edge-to-edge
+                            if (cfg.lineOrientation == LineOrientation.VERTICAL) {
+                                val lx = (size.width * cfg.linePosition).coerceIn(4f, size.width - 4f)
+                                drawLine(Color(0xFFE63946), Offset(lx, 0f), Offset(lx, size.height), strokeWidth = 2.5.dp.toPx())
+                            } else {
+                                val ly = (size.height * cfg.linePosition).coerceIn(4f, size.height - 4f)
+                                drawLine(Color(0xFFE63946), Offset(0f, ly), Offset(size.width, ly), strokeWidth = 2.5.dp.toPx())
+                            }
+                            // Independent Color Capture Zone ("Zona Color")
+                            val zoneW = size.width * (cfg.roiSize.widthFrac * 0.55f).coerceIn(0.18f, 0.48f)
+                            val zoneH = size.height * (cfg.roiSize.heightFrac * 0.55f).coerceIn(0.18f, 0.45f)
+                            val zoneLeft = (size.width * cfg.colorZoneX - zoneW / 2f).coerceIn(4f, size.width - zoneW - 4f)
+                            val zoneTop = (size.height * cfg.colorZoneY - zoneH / 2f).coerceIn(4f, size.height - zoneH - 4f)
                             drawRect(
-                                color = if (cfg.isCalibrated) Color(0xFF22C55E) else Color(0xFFF5B731),
-                                topLeft = Offset(roiLeft, roiTop),
-                                size = Size(roiW, roiH),
+                                color = if (cfg.isCalibrated) Color(0xFF00E5FF) else Color(0xFFF5B731),
+                                topLeft = Offset(zoneLeft, zoneTop),
+                                size = Size(zoneW, zoneH),
                                 style = Stroke(width = 2.5.dp.toPx())
                             )
-                            if (cfg.lineOrientation == LineOrientation.VERTICAL) {
-                                val lx = roiLeft + roiW * cfg.linePosition
-                                drawLine(Color(0xFFE63946), Offset(lx, roiTop), Offset(lx, roiTop + roiH), strokeWidth = 2.5.dp.toPx())
-                            } else {
-                                val ly = roiTop + roiH * cfg.linePosition
-                                drawLine(Color(0xFFE63946), Offset(roiLeft, ly), Offset(roiLeft + roiW, ly), strokeWidth = 2.5.dp.toPx())
-                            }
                         }
                     } else {
                         Text(
@@ -1095,6 +1194,37 @@ private fun DirectorAntennaMonitorTab(
                     }
                 }
 
+                if (cfg.detectionMode == DetectionMode.SINGLE_COLOR) {
+                    val palette = remember(strings.isSpanish) { predefinedMotoColors(strings.isSpanish) }
+                    Text(
+                        if (strings.isSpanish) "Color Único Objetivo: ${cfg.singleTargetColorName.ifBlank { "Cualquier perfil" }}"
+                        else "Single Target Color: ${cfg.singleTargetColorName.ifBlank { "Any profile" }}",
+                        style = MaterialTheme.typography.labelLarge,
+                        color = mx.telemetryGreen
+                    )
+                    LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        items(palette) { sample ->
+                            val isSel = cfg.singleTargetColorName.equals(sample.colorName, ignoreCase = true)
+                            val c = try { Color(android.graphics.Color.parseColor(sample.hex)) } catch (_: Exception) { Color.White }
+                            Column(
+                                horizontalAlignment = Alignment.CenterHorizontally,
+                                modifier = Modifier.clickable {
+                                    viewModel.updateRemoteAntennaConfig(selectedAntennaId, singleTargetColorName = sample.colorName)
+                                }
+                            ) {
+                                Box(
+                                    modifier = Modifier
+                                        .size(28.dp)
+                                        .clip(CircleShape)
+                                        .background(c)
+                                        .border(if (isSel) 3.dp else 1.dp, if (isSel) mx.goldAccent else Color.White, CircleShape)
+                                )
+                                Text(sample.colorName, style = MaterialTheme.typography.labelSmall, color = if (isSel) mx.goldAccent else mx.subtleText)
+                            }
+                        }
+                    }
+                }
+
                 Text(
                     if (strings.isSpanish) "Sentido de Paso + Comisario IA Gemini" else "Passing Direction + Gemini AI Steward",
                     style = MaterialTheme.typography.labelLarge,
@@ -1127,7 +1257,8 @@ private fun DirectorAntennaMonitorTab(
                 }
 
                 Text(
-                    if (strings.isSpanish) "Orientación y Posición Línea (${(cfg.linePosition * 100).toInt()}%)" else "Line Orientation & Position (${(cfg.linePosition * 100).toInt()}%)",
+                    if (strings.isSpanish) "Línea de Meta (Pantalla Completa • ${(cfg.linePosition * 100).toInt()}%)"
+                    else "Finish Line (Full Screen • ${(cfg.linePosition * 100).toInt()}%)",
                     style = MaterialTheme.typography.labelLarge,
                     color = MaterialTheme.colorScheme.onSurface
                 )
@@ -1150,14 +1281,41 @@ private fun DirectorAntennaMonitorTab(
                     onValueChange = { viewModel.updateRemoteAntennaConfig(selectedAntennaId, linePosition = it) },
                     valueRange = 0.1f..0.9f,
                     colors = SliderDefaults.colors(
-                        thumbColor = mx.goldAccent,
-                        activeTrackColor = mx.goldAccent,
+                        thumbColor = mx.racingRed,
+                        activeTrackColor = mx.racingRed,
                         inactiveTrackColor = mx.glassBorder
                     )
                 )
 
                 Text(
-                    if (strings.isSpanish) "Tamaño Túnel ROI" else "ROI Tunnel Size",
+                    if (strings.isSpanish) "Zona de Color Independiente (X ${(cfg.colorZoneX * 100).toInt()}% • Y ${(cfg.colorZoneY * 100).toInt()}%)"
+                    else "Separate Color Zone (X ${(cfg.colorZoneX * 100).toInt()}% • Y ${(cfg.colorZoneY * 100).toInt()}%)",
+                    style = MaterialTheme.typography.labelLarge,
+                    color = Color(0xFF00E5FF)
+                )
+                Slider(
+                    value = cfg.colorZoneX,
+                    onValueChange = { viewModel.updateRemoteAntennaConfig(selectedAntennaId, colorZoneX = it) },
+                    valueRange = 0.15f..0.85f,
+                    colors = SliderDefaults.colors(
+                        thumbColor = Color(0xFF00E5FF),
+                        activeTrackColor = Color(0xFF00E5FF),
+                        inactiveTrackColor = mx.glassBorder
+                    )
+                )
+                Slider(
+                    value = cfg.colorZoneY,
+                    onValueChange = { viewModel.updateRemoteAntennaConfig(selectedAntennaId, colorZoneY = it) },
+                    valueRange = 0.18f..0.82f,
+                    colors = SliderDefaults.colors(
+                        thumbColor = Color(0xFF00E5FF),
+                        activeTrackColor = Color(0xFF00E5FF),
+                        inactiveTrackColor = mx.glassBorder
+                    )
+                )
+
+                Text(
+                    if (strings.isSpanish) "Tamaño Zona de Color" else "Color Zone Size",
                     style = MaterialTheme.typography.labelLarge,
                     color = MaterialTheme.colorScheme.onSurface
                 )
@@ -1167,21 +1325,6 @@ private fun DirectorAntennaMonitorTab(
                             selected = cfg.roiSize == sz,
                             onClick = { viewModel.updateRemoteAntennaConfig(selectedAntennaId, roiSize = sz) },
                             label = { Text(sz.name) },
-                            colors = mxChipColors()
-                        )
-                    }
-                }
-                Text(
-                    if (strings.isSpanish) "Altura Túnel ROI" else "ROI Tunnel Height",
-                    style = MaterialTheme.typography.labelLarge,
-                    color = MaterialTheme.colorScheme.onSurface
-                )
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    RoiHeight.entries.forEach { rh ->
-                        FilterChip(
-                            selected = cfg.roiHeight == rh,
-                            onClick = { viewModel.updateRemoteAntennaConfig(selectedAntennaId, roiHeight = rh) },
-                            label = { Text(rh.name) },
                             colors = mxChipColors()
                         )
                     }

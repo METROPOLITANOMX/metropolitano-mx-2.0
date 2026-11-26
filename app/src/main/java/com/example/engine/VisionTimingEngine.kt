@@ -35,12 +35,12 @@ data class VisionDetectionResult(
 )
 
 /**
- * Real-time Computer Vision Engine 2.0 for RC 1/4 Finish Line Antennae:
- * 1. ROI "Tunnel Effect" clipping + directional motion gate (rejects reverse traffic).
- * 2. Adaptive EMA Background Model (automatically tracks gradual cloud/sunlight changes) + shadow suppression.
- * 3. Sub-frame linear velocity interpolation (reduces frame quantization error).
- * 4. Multi-frame fairing pixel accumulation matched in perceptual CIE Lab chroma space + confidence margin.
- * 5. Trigger-only HD crop (360x270) + synchronous on-device ML Kit Dorsal OCR fallback.
+ * Real-time Computer Vision Engine 3.0 for RC 1/4 Finish Line Antennae:
+ * 1. Full-Screen Finish Line ("Línea de Meta" edge-to-edge) for reliable lap timing.
+ * 2. Independent Separated Color Capture Zone ("Zona de Color") with bi-directional pre/post frame buffer.
+ * 3. Indoor-aware HSV + CIE Lab fairing color classifier (eliminates warm indoor white->grey/brown bleed).
+ * 4. Strict mode handling: ANY_PASS (timing only unless Warm-Up), SINGLE_COLOR (1 color), FAIRING_COLOR (multi-rider).
+ * 5. Sub-frame crossing interpolation (~4ms) + trigger-only HD photo-finish + ML Kit Dorsal OCR.
  */
 class VisionTimingEngine {
 
@@ -62,6 +62,9 @@ class VisionTimingEngine {
     private var entryCentroidY = -1f
     private var lastCentroidX = -1f
     private var lastCentroidY = -1f
+
+    // Pre-crossing rolling buffer from Color Zone (captures bikes going R->L as well as L->R)
+    private val preCrossColorFrames = ArrayDeque<List<Int>>(4)
 
     // Trigger & Color Separation accumulation state
     private var accumulatingFairing = false
@@ -86,6 +89,7 @@ class VisionTimingEngine {
         entryCentroidX = -1f
         entryCentroidY = -1f
         accumulatedRgb.clear()
+        preCrossColorFrames.clear()
     }
 
     fun isCalibrated(): Boolean = baselineR != null
@@ -96,7 +100,8 @@ class VisionTimingEngine {
         profiles: List<RiderColorProfile>,
         syncedNowMs: Long,
         isSpanish: Boolean,
-        captureLiveSnapshot: Boolean
+        captureLiveSnapshot: Boolean,
+        extractColorsForWarmup: Boolean = false
     ): VisionDetectionResult? {
         val nowMono = SystemClock.elapsedRealtime()
         if (lastFrameMonoMs > 0L) {
@@ -140,16 +145,7 @@ class VisionTimingEngine {
         val bG = baselineG!!
         val bB = baselineB!!
 
-        // Compute ROI Tunnel Rect
-        val roiW = (w * config.roiSize.widthFrac).toInt().coerceAtLeast(24)
-        val roiH = (h * config.roiSize.heightFrac).toInt().coerceAtLeast(24)
-        val roiLeft = ((w - roiW) / 2).coerceIn(0, w - 1)
-        val roiRight = (roiLeft + roiW).coerceIn(roiLeft + 1, w)
-        val centerY = (h * config.roiHeight.centerYFrac).toInt()
-        val roiTop = (centerY - roiH / 2).coerceIn(0, h - roiH)
-        val roiBottom = (roiTop + roiH).coerceIn(roiTop + 1, h)
-
-        // Trigger line strip inside ROI + motion centroid
+        // 1. FULL-SCREEN FINISH LINE STRIP ("Línea de Meta" spanning full screen edge-to-edge)
         val lineStripHalf = 3
         val linePixelsTotal: Int
         var lineForegroundCount = 0
@@ -157,38 +153,38 @@ class VisionTimingEngine {
         var sumY = 0f
 
         if (config.lineOrientation == LineOrientation.VERTICAL) {
-            val lineX = (roiLeft + roiW * config.linePosition).toInt().coerceIn(roiLeft, roiRight - 1)
-            val x0 = (lineX - lineStripHalf).coerceAtLeast(roiLeft)
-            val x1 = (lineX + lineStripHalf).coerceAtMost(roiRight - 1)
-            linePixelsTotal = (x1 - x0 + 1) * (roiBottom - roiTop)
-            for (y in roiTop until roiBottom) {
+            val lineX = (w * config.linePosition).toInt().coerceIn(2, w - 3)
+            val x0 = (lineX - lineStripHalf).coerceAtLeast(0)
+            val x1 = (lineX + lineStripHalf).coerceAtMost(w - 1)
+            linePixelsTotal = (x1 - x0 + 1) * h
+            for (y in 0 until h step 2) {
                 for (x in x0..x1) {
                     val idx = y * w + x
                     if (isForeground(pixels[idx], bR[idx], bG[idx], bB[idx])) {
-                        lineForegroundCount++
-                        sumX += x
-                        sumY += y
+                        lineForegroundCount += 2
+                        sumX += x * 2f
+                        sumY += y * 2f
                     }
                 }
             }
         } else {
-            val lineY = (roiTop + roiH * config.linePosition).toInt().coerceIn(roiTop, roiBottom - 1)
-            val y0 = (lineY - lineStripHalf).coerceAtLeast(roiTop)
-            val y1 = (lineY + lineStripHalf).coerceAtMost(roiBottom - 1)
-            linePixelsTotal = (y1 - y0 + 1) * (roiRight - roiLeft)
+            val lineY = (h * config.linePosition).toInt().coerceIn(2, h - 3)
+            val y0 = (lineY - lineStripHalf).coerceAtLeast(0)
+            val y1 = (lineY + lineStripHalf).coerceAtMost(h - 1)
+            linePixelsTotal = (y1 - y0 + 1) * w
             for (y in y0..y1) {
-                for (x in roiLeft until roiRight) {
+                for (x in 0 until w step 2) {
                     val idx = y * w + x
                     if (isForeground(pixels[idx], bR[idx], bG[idx], bB[idx])) {
-                        lineForegroundCount++
-                        sumX += x
-                        sumY += y
+                        lineForegroundCount += 2
+                        sumX += x * 2f
+                        sumY += y * 2f
                     }
                 }
             }
         }
 
-        val occupancy = if (linePixelsTotal > 0) lineForegroundCount.toFloat() / linePixelsTotal else 0f
+        val occupancy = if (linePixelsTotal > 0) (lineForegroundCount.toFloat() / linePixelsTotal).coerceIn(0f, 1f) else 0f
         if (lineForegroundCount > 0) {
             val cx = sumX / lineForegroundCount
             val cy = sumY / lineForegroundCount
@@ -200,36 +196,49 @@ class VisionTimingEngine {
             lastCentroidY = cy
         }
 
-        // Accumulate rider body / fairing pixels across subsequent frames after crossing line
+        // 2. SEPARATED COLOR CAPTURE ZONE ("Zona de Color" positioned independently of finish line)
+        val czW = (w * config.roiSize.widthFrac).toInt().coerceAtLeast(24)
+        val czH = (h * config.roiSize.heightFrac).toInt().coerceAtLeast(24)
+        val czCenterX = (w * config.colorZoneX).toInt()
+        val czCenterY = (h * config.colorZoneY).toInt()
+        val czLeft = (czCenterX - czW / 2).coerceIn(0, (w - czW).coerceAtLeast(0))
+        val czRight = (czLeft + czW).coerceAtMost(w)
+        val czTop = (czCenterY - czH / 2).coerceIn(0, (h - czH).coerceAtLeast(0))
+        val czBottom = (czTop + czH).coerceAtMost(h)
+
+        val currentColorZoneFg = extractStrongZoneForeground(pixels, bR, bG, bB, w, czLeft, czTop, czRight, czBottom)
+        if (!accumulatingFairing) {
+            if (preCrossColorFrames.size >= 4) preCrossColorFrames.removeFirst()
+            preCrossColorFrames.addLast(currentColorZoneFg)
+        }
+
+        // Accumulate fairing pixels from Color Zone across frames after crossing
         if (accumulatingFairing) {
-            var roiSumX = 0f
-            var roiSumY = 0f
-            var roiFgCount = 0
-            for (y in roiTop until roiBottom step 2) {
-                for (x in roiLeft until roiRight step 2) {
-                    val idx = y * w + x
-                    if (isForeground(pixels[idx], bR[idx], bG[idx], bB[idx])) {
-                        accumulatedRgb.add(pixels[idx])
-                        roiSumX += x
-                        roiSumY += y
-                        roiFgCount++
-                    }
-                }
-            }
-            if (roiFgCount > 0) {
-                lastCentroidX = roiSumX / roiFgCount
-                lastCentroidY = roiSumY / roiFgCount
-            }
+            accumulatedRgb.addAll(currentColorZoneFg)
             accumulationFramesLeft--
             if (accumulationFramesLeft <= 0) {
                 accumulatingFairing = false
                 val singleOnly = config.detectionMode == DetectionMode.SINGLE_COLOR
-                val colors = extractDominantLabColors(accumulatedRgb, isSpanish, singleOnly = singleOnly)
-                val (matched, confidence) = matchRiderProfileWithConfidence(colors, profiles)
+                // Fallback to full-frame moving foreground only if Color Zone stayed completely empty
+                val finalPixels = if (accumulatedRgb.size >= 12) {
+                    accumulatedRgb
+                } else {
+                    extractStrongZoneForeground(pixels, bR, bG, bB, w, 0, 0, w, h)
+                }
+                val colors = extractDominantLabColors(finalPixels, isSpanish, singleOnly = singleOnly)
+                val targetProfiles = if (singleOnly && config.singleTargetColorName.isNotBlank()) {
+                    profiles.filter { p ->
+                        p.samples.any { s -> s.colorName.equals(config.singleTargetColorName, ignoreCase = true) }
+                    }.ifEmpty { profiles.take(1) }
+                } else {
+                    profiles
+                }
+                val (matched, confidence) = matchRiderProfileWithConfidence(colors, targetProfiles)
                 val snap = encodeBitmapBase64(rgbBitmap, 58)
                 val dorsalOut = frozenDorsalHint
                 val pfB64 = frozenPhotoFinishB64
                 accumulatedRgb.clear()
+                preCrossColorFrames.clear()
                 entryCentroidX = -1f
                 entryCentroidY = -1f
                 return VisionDetectionResult(
@@ -247,21 +256,17 @@ class VisionTimingEngine {
             }
         }
 
-        // Adaptive EMA background update when track is calm (handles passing clouds & light drift)
+        // Adaptive EMA background update across whole frame when track is calm (handles gradual light drift)
         if (!accumulatingFairing && !cooldownActive && occupancy < config.antiVibration.minOccupancy * 0.35f) {
             entryCentroidX = -1f
             entryCentroidY = -1f
-            val alpha = 0.025f
+            val alpha = 0.022f
             val inv = 1f - alpha
-            for (y in roiTop until roiBottom) {
-                val rowOff = y * w
-                for (x in roiLeft until roiRight) {
-                    val i = rowOff + x
-                    val p = pixels[i]
-                    bR[i] = bR[i] * inv + Color.red(p) * alpha
-                    bG[i] = bG[i] * inv + Color.green(p) * alpha
-                    bB[i] = bB[i] * inv + Color.blue(p) * alpha
-                }
+            for (i in pixels.indices step 2) {
+                val p = pixels[i]
+                bR[i] = bR[i] * inv + Color.red(p) * alpha
+                bG[i] = bG[i] * inv + Color.green(p) * alpha
+                bB[i] = bB[i] * inv + Color.blue(p) * alpha
             }
         }
 
@@ -298,7 +303,6 @@ class VisionTimingEngine {
 
         val thresholdFrames = config.antiVibration.requiredFrames
         if (consecutiveMotionFrames >= thresholdFrames && !accumulatingFairing) {
-            // Directional sanity check
             if (!passesDirectionFilter(config.directionFilter)) {
                 consecutiveMotionFrames = 0
                 prevOccupancy = occupancy
@@ -327,21 +331,10 @@ class VisionTimingEngine {
             val subFrameOffsetMs = ((1f - overshootFrac) * (emaFrameIntervalMs * 0.55f)).toLong().coerceIn(0L, 26L)
             val exactCrossingMs = syncedNowMs - subFrameOffsetMs
 
-            // Extract HD Photo-Finish & run fast local ML Kit dorsal OCR ONLY on trigger
+            // HD Photo-Finish & fast local ML Kit dorsal OCR ONLY on trigger
             val hdBitmap = imageProxyToScaledBitmap(image, maxDim = 420) ?: rgbBitmap
             val dorsalDetected = extractDorsalOnDevice(hdBitmap)
             val hdPhotoFinishB64 = encodeBitmapBase64(hdBitmap, 74)
-
-            // Extract immediate ROI foreground pixels
-            val roiFg = mutableListOf<Int>()
-            for (y in roiTop until roiBottom step 2) {
-                for (x in roiLeft until roiRight step 2) {
-                    val idx = y * w + x
-                    if (isForeground(pixels[idx], bR[idx], bG[idx], bB[idx])) {
-                        roiFg.add(pixels[idx])
-                    }
-                }
-            }
 
             when (config.detectionMode) {
                 DetectionMode.FAIRING_COLOR, DetectionMode.SINGLE_COLOR -> {
@@ -349,13 +342,28 @@ class VisionTimingEngine {
                     frozenPhotoFinishB64 = hdPhotoFinishB64
                     frozenDorsalHint = dorsalDetected
                     accumulatedRgb.clear()
-                    accumulatedRgb.addAll(roiFg)
+                    // Seed from pre-crossing Color Zone buffer (covers bikes moving into line from Color Zone)
+                    preCrossColorFrames.forEach { accumulatedRgb.addAll(it) }
+                    accumulatedRgb.addAll(currentColorZoneFg)
                     accumulatingFairing = true
                     accumulationFramesLeft = if (config.detectionMode == DetectionMode.SINGLE_COLOR) 2 else 3
                 }
                 DetectionMode.ANY_PASS -> {
-                    val colors = extractDominantLabColors(roiFg, isSpanish, singleOnly = false)
-                    val (matched, confidence) = matchRiderProfileWithConfidence(colors, profiles)
+                    // In ANY_PASS mode: focus purely on crossing detection without noisy color matching
+                    // unless Warm-Up is active and explicitly collecting color samples.
+                    val colors = if (extractColorsForWarmup) {
+                        val zoneSeed = (preCrossColorFrames.flatten() + currentColorZoneFg)
+                            .ifEmpty { extractStrongZoneForeground(pixels, bR, bG, bB, w, 0, 0, w, h) }
+                        extractDominantLabColors(zoneSeed, isSpanish, singleOnly = false)
+                    } else {
+                        emptyList()
+                    }
+                    val (matched, confidence) = if (colors.isNotEmpty()) {
+                        matchRiderProfileWithConfidence(colors, profiles)
+                    } else {
+                        null to 0f
+                    }
+                    preCrossColorFrames.clear()
                     prevOccupancy = occupancy
                     return VisionDetectionResult(
                         triggered = true,
@@ -389,6 +397,43 @@ class VisionTimingEngine {
         )
     }
 
+    /**
+     * Collects strong foreground pixels inside the Color Zone and discards weak border/floor-shadow bleed
+     * by keeping only high-delta pixels when plenty are present.
+     */
+    private fun extractStrongZoneForeground(
+        pixels: IntArray,
+        bR: FloatArray,
+        bG: FloatArray,
+        bB: FloatArray,
+        w: Int,
+        left: Int,
+        top: Int,
+        right: Int,
+        bottom: Int
+    ): List<Int> {
+        val scored = ArrayList<Pair<Float, Int>>(160)
+        for (y in top until bottom step 2) {
+            for (x in left until right step 2) {
+                val idx = y * w + x
+                val px = pixels[idx]
+                val dr = Color.red(px) - bR[idx]
+                val dg = Color.green(px) - bG[idx]
+                val db = Color.blue(px) - bB[idx]
+                val totalDiff = abs(dr) + abs(dg) + abs(db)
+                val chromaShift = abs(dr - dg) + abs(dg - db)
+                if (totalDiff > 92f || (totalDiff > 64f && chromaShift > 26f)) {
+                    scored.add((totalDiff + chromaShift * 0.6f) to px)
+                }
+            }
+        }
+        if (scored.size <= 16) return scored.map { it.second }
+        // Keep the top 70% strongest foreground pixels so floor edge mix is trimmed out
+        scored.sortByDescending { it.first }
+        val keep = (scored.size * 0.70f).toInt().coerceAtLeast(16)
+        return scored.take(keep).map { it.second }
+    }
+
     private fun passesDirectionFilter(filter: PassingDirection): Boolean {
         if (filter == PassingDirection.ANY || entryCentroidX < 0f) return true
         val dx = lastCentroidX - entryCentroidX
@@ -402,19 +447,15 @@ class VisionTimingEngine {
         }
     }
 
-    /**
-     * Shadow-resistant foreground detector:
-     * Rejects mild luminance-only shadows where R, G, B darken equally unless total change is large.
-     */
     private fun isForeground(pixel: Int, baseR: Float, baseG: Float, baseB: Float): Boolean {
         val dr = Color.red(pixel) - baseR
         val dg = Color.green(pixel) - baseG
         val db = Color.blue(pixel) - baseB
         val totalDiff = abs(dr) + abs(dg) + abs(db)
-        if (totalDiff > 108f) return true
-        if (totalDiff < 62f) return false
+        if (totalDiff > 102f) return true
+        if (totalDiff < 58f) return false
         val chromaShift = abs(dr - dg) + abs(dg - db)
-        return chromaShift > 22f
+        return chromaShift > 24f
     }
 
     private fun extractDorsalOnDevice(bitmap: Bitmap): String {
@@ -436,29 +477,51 @@ class VisionTimingEngine {
     ): List<LabSample> {
         if (rgbPixels.isEmpty()) return emptyList()
         val buckets = mutableMapOf<String, MutableList<Int>>()
+        val hsv = FloatArray(3)
         for (c in rgbPixels) {
+            Color.colorToHSV(c, hsv)
             val lab = rgbToLab(c)
-            val label = classifyLabColorName(lab.first, lab.second, lab.third, isSpanish)
+            val label = classifyIndoorAwareMotoColor(
+                hue = hsv[0],
+                sat = hsv[1],
+                value = hsv[2],
+                l = lab.first,
+                a = lab.second,
+                b = lab.third,
+                es = isSpanish
+            )
             buckets.getOrPut(label) { mutableListOf() }.add(c)
         }
-        val neutralLabels = setOf("Negro", "Black", "Gris", "Gray", "Blanco", "White")
+        val neutralLowPriority = setOf("Negro", "Black", "Gris", "Gray")
         val ordered = if (singleOnly) {
-            val vibrant = buckets.entries.filter { it.key !in neutralLabels && it.value.size >= 6 }
-            if (vibrant.isNotEmpty()) {
-                vibrant.sortedByDescending { it.value.size }.take(1)
+            val nonShadow = buckets.entries.filter { it.key !in neutralLowPriority && it.value.size >= 5 }
+            if (nonShadow.isNotEmpty()) {
+                nonShadow.sortedByDescending { it.value.size }.take(1)
             } else {
                 buckets.entries.sortedByDescending { it.value.size }.take(1)
             }
         } else {
-            buckets.entries.sortedByDescending { it.value.size }.take(3)
+            val primary = buckets.entries.filter { it.value.size >= 4 }.sortedByDescending { it.value.size }
+            (primary.ifEmpty { buckets.entries.sortedByDescending { it.value.size } }).take(3)
         }
+
         return ordered.map { (name, list) ->
-            val avgR = list.map { Color.red(it) }.average().toInt().coerceIn(0, 255)
-            val avgG = list.map { Color.green(it) }.average().toInt().coerceIn(0, 255)
-            val avgB = list.map { Color.blue(it) }.average().toInt().coerceIn(0, 255)
-            val avgColor = Color.rgb(avgR, avgG, avgB)
-            val (l, a, b) = rgbToLab(avgColor)
-            val hex = String.format("#%02X%02X%02X", avgR, avgG, avgB)
+            // Use median pixel of the top bright/clean pixels so the UI circle matches the true color name
+            val sortedByBrightness = list.sortedBy { c ->
+                Color.red(c) * 0.299 + Color.green(c) * 0.587 + Color.blue(c) * 0.114
+            }
+            val repColor = if (name == "Blanco" || name == "White") {
+                sortedByBrightness[(sortedByBrightness.size * 0.72f).toInt().coerceIn(0, sortedByBrightness.lastIndex)]
+            } else if (name == "Negro" || name == "Black") {
+                sortedByBrightness[(sortedByBrightness.size * 0.30f).toInt().coerceIn(0, sortedByBrightness.lastIndex)]
+            } else {
+                sortedByBrightness[sortedByBrightness.size / 2]
+            }
+            val r = Color.red(repColor)
+            val g = Color.green(repColor)
+            val bVal = Color.blue(repColor)
+            val (l, a, b) = rgbToLab(repColor)
+            val hex = String.format("#%02X%02X%02X", r, g, bVal)
             LabSample(l = l, a = a, b = b, hex = hex, colorName = name)
         }
     }
@@ -474,10 +537,15 @@ class VisionTimingEngine {
             var totalDist = 0.0
             for (d in detected) {
                 val minSampleDist = profile.samples.minOf { s ->
-                    val dl = (d.l - s.l) * 0.35
+                    val dl = (d.l - s.l) * 0.22
                     val da = d.a - s.a
                     val db = d.b - s.b
-                    sqrt(dl * dl + da * da + db * db)
+                    val rawDist = sqrt(dl * dl + da * da + db * db)
+                    if (d.colorName.equals(s.colorName, ignoreCase = true)) {
+                        (rawDist * 0.45).coerceAtMost(14.0)
+                    } else {
+                        rawDist
+                    }
                 }
                 totalDist += minSampleDist
             }
@@ -486,9 +554,9 @@ class VisionTimingEngine {
         if (scored.isEmpty()) return null to 0f
         scored.sortBy { it.second }
         val (bestProfile, bestDist) = scored.first()
-        if (bestDist >= 36.0) return null to 0f
+        if (bestDist >= 38.0) return null to 0f
 
-        val closeness = ((36.0 - bestDist) / 36.0).toFloat().coerceIn(0f, 1f)
+        val closeness = ((38.0 - bestDist) / 38.0).toFloat().coerceIn(0f, 1f)
         val marginBoost = if (scored.size >= 2) {
             val secondDist = scored[1].second
             ((secondDist - bestDist) / 20.0).toFloat().coerceIn(0f, 0.35f)
@@ -521,25 +589,46 @@ class VisionTimingEngine {
         return Triple(l, a, bVal)
     }
 
-    private fun classifyLabColorName(l: Double, a: Double, b: Double, es: Boolean): String {
+    /**
+     * Indoor-calibrated HSV + CIE Lab classifier:
+     * Handles warm indoor lighting where white plastics shift slightly yellow (+b) without misclassifying as grey/brown.
+     */
+    private fun classifyIndoorAwareMotoColor(
+        hue: Float,
+        sat: Float,
+        value: Float,
+        l: Double,
+        a: Double,
+        b: Double,
+        es: Boolean
+    ): String {
         val chroma = sqrt(a * a + b * b)
-        if (chroma < 14.0) {
-            return when {
-                l < 26.0 -> if (es) "Negro" else "Black"
-                l > 76.0 -> if (es) "Blanco" else "White"
-                else -> if (es) "Gris" else "Gray"
-            }
+        if (value < 0.22f || l < 24.0) {
+            return if (es) "Negro" else "Black"
+        }
+        // White under sunlight or warm indoor tungsten/LED lighting
+        if ((value >= 0.56f && sat <= 0.28f) || (l >= 67.0 && chroma < 24.0 && sat <= 0.32f)) {
+            return if (es) "Blanco" else "White"
+        }
+        if (sat <= 0.20f || chroma < 13.0) {
+            return if (es) "Gris" else "Gray"
         }
         return when {
-            a > 28 && b > 18 -> if (es) "Rojo" else "Red"
-            a > 16 && b > 35 -> if (es) "Naranja" else "Orange"
-            a in -14.0..18.0 && b > 42 -> if (es) "Amarillo" else "Yellow"
-            a < -24 && b > 20 -> if (es) "Verde Flúor" else "Neon Green"
-            a < -16 && b in -15.0..20.0 -> if (es) "Verde" else "Green"
-            a < -8 && b < -18 -> if (es) "Cian" else "Cyan"
-            a > 24 && b < -12 -> if (es) "Rosa" else "Pink"
-            b < -24 -> if (es) "Azul" else "Blue"
-            else -> if (es) "Gris" else "Gray"
+            hue < 14f || hue >= 342f -> if (es) "Rojo" else "Red"
+            hue < 38f -> {
+                if (value < 0.44f && sat < 0.62f) {
+                    if (es) "Marrón" else "Brown"
+                } else {
+                    if (es) "Naranja" else "Orange"
+                }
+            }
+            hue < 68f -> if (es) "Amarillo" else "Yellow"
+            hue < 105f && value > 0.58f && sat > 0.42f -> if (es) "Verde Flúor" else "Neon Green"
+            hue < 158f -> if (es) "Verde" else "Green"
+            hue < 196f -> if (es) "Cian" else "Cyan"
+            hue < 258f -> if (es) "Azul" else "Blue"
+            hue < 300f -> if (es) "Morado" else "Purple"
+            else -> if (es) "Rosa" else "Pink"
         }
     }
 

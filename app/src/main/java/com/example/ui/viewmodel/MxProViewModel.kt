@@ -48,6 +48,7 @@ import com.example.data.model.sha256
 import com.example.data.repository.MxProRepository
 import com.example.engine.AudioOutputRoute
 import com.example.engine.GeminiStewardEngine
+import com.example.engine.LocalLanAntennaBridge
 import com.example.engine.LocationGuard
 import com.example.engine.PocketAudioService
 import com.example.engine.VisionDetectionResult
@@ -79,6 +80,7 @@ class MxProViewModel(application: Application) : AndroidViewModel(application) {
     val voiceEngine = VoiceAndAudioEngine(application)
     private val locationGuard = LocationGuard(application)
     private val aiSteward = GeminiStewardEngine()
+    private val lanBridge = LocalLanAntennaBridge()
 
     private val _uiState = MutableStateFlow(MxUiState())
     val uiState: StateFlow<MxUiState> = _uiState.asStateFlow()
@@ -88,7 +90,13 @@ class MxProViewModel(application: Application) : AndroidViewModel(application) {
     private var lastSpokenPaAnnouncementId = ""
     private var lipoAlertFiredForSessionStart = 0L
     private var lastAutoEndedPhaseStartMs = 0L
+    private var gateCountdownPhaseStartMs = 0L
+    private var lastAnnouncedGateSec = Int.MAX_VALUE
     private var streamJob: Job? = null
+    @Volatile
+    private var discoveredDirectorLanIp: String? = null
+    @Volatile
+    private var lastLanProbeMonoMs: Long = 0L
 
     init {
         viewModelScope.launch {
@@ -168,15 +176,42 @@ class MxProViewModel(application: Application) : AndroidViewModel(application) {
             }
         }
 
-        // High-precision Phase Timer Watcher (Warm-Up 3:00 auto-finish + 30s Gate transition)
+        // High-precision Phase Timer Watcher (Warm-Up 3:00 auto-finish + 30s Gate PA + Race end)
         viewModelScope.launch {
             while (isActive) {
-                delay(500L)
+                delay(200L)
                 val state = _uiState.value
                 val room = state.roomState
                 val now = syncedNowMs()
+                val es = StringsProvider.current(state.languageOverride).isSpanish
+                val canSpeakOnDevice = !state.isAntennaRoleActive && !state.paAudioMuted && state.antennaVoiceEnabled
+
+                // 30-second Start Light second-by-second announcements (20s + 10..5)
+                if (room.sessionPhase == SessionPhase.COUNTDOWN_30 && room.phaseEndTimeMs > now) {
+                    if (room.phaseStartTimeMs != gateCountdownPhaseStartMs) {
+                        gateCountdownPhaseStartMs = room.phaseStartTimeMs
+                        lastAnnouncedGateSec = Int.MAX_VALUE
+                    }
+                    val remSec = ((room.phaseEndTimeMs - now + 200L) / 1000L).toInt().coerceAtLeast(0)
+                    if (remSec < lastAnnouncedGateSec) {
+                        lastAnnouncedGateSec = remSec
+                        val spokenGateCue: String? = when (remSec) {
+                            20 -> if (es) "Veinte segundos" else "Twenty seconds"
+                            10 -> if (es) "Diez" else "Ten"
+                            9 -> if (es) "Nueve" else "Nine"
+                            8 -> if (es) "Ocho" else "Eight"
+                            7 -> if (es) "Siete" else "Seven"
+                            6 -> if (es) "Seis" else "Six"
+                            5 -> if (es) "Cinco" else "Five"
+                            else -> null
+                        }
+                        if (spokenGateCue != null && canSpeakOnDevice) {
+                            voiceEngine.speak(spokenGateCue, flush = true)
+                        }
+                    }
+                }
+
                 if (room.phaseEndTimeMs > 0L && now >= room.phaseEndTimeMs && room.phaseStartTimeMs != lastAutoEndedPhaseStartMs) {
-                    val es = StringsProvider.current(state.languageOverride).isSpanish
                     when (room.sessionPhase) {
                         SessionPhase.WARMUP -> {
                             lastAutoEndedPhaseStartMs = room.phaseStartTimeMs
@@ -191,27 +226,28 @@ class MxProViewModel(application: Application) : AndroidViewModel(application) {
                                 sessionPhase = SessionPhase.IDLE,
                                 flagState = FlagState.GREEN,
                                 phaseEndTimeMs = 0L,
+                                friendlyModeActive = false,
                                 lastPaAnnouncement = ann,
                                 updatedAtMs = now
                             )
-                            repo.saveRoom(finished)
-                            voiceEngine.playBeep(ToneGenerator.TONE_CDMA_ALERT_CALL_GUARD, 450)
-                            if (!state.paAudioMuted) {
-                                voiceEngine.speak(if (es) ann.textEs else ann.textEn)
-                            }
                             _uiState.update {
                                 it.copy(
                                     roomState = finished,
                                     statusBannerMessage = if (es) "Final de warm-up — ¡Pilotos a parrilla!" else "End of warm-up — Riders to the grid!"
                                 )
                             }
+                            voiceEngine.playBeep(ToneGenerator.TONE_CDMA_ALERT_CALL_GUARD, 450)
+                            if (canSpeakOnDevice) {
+                                voiceEngine.speak(if (es) ann.textEs else ann.textEn, flush = true)
+                            }
+                            repo.saveRoom(finished)
                         }
                         SessionPhase.COUNTDOWN_30 -> {
                             lastAutoEndedPhaseStartMs = room.phaseStartTimeMs
                             val ann = PaAnnouncement(
                                 id = "pa_${now}_gatedrop",
-                                textEs = "¡Valla abajo! ¡Gas!",
-                                textEn = "Gate drop! Go!",
+                                textEs = "¡Salida! ¡Gas!",
+                                textEn = "Start! Go!",
                                 timestampMs = now
                             )
                             lastSpokenPaAnnouncementId = ann.id
@@ -220,15 +256,45 @@ class MxProViewModel(application: Application) : AndroidViewModel(application) {
                                 flagState = FlagState.GREEN,
                                 phaseStartTimeMs = now,
                                 phaseEndTimeMs = now + room.heatDurationSec * 1000L,
+                                gateDropTimeMs = now,
                                 lastPaAnnouncement = ann,
                                 updatedAtMs = now
                             )
-                            repo.saveRoom(startedRace)
-                            voiceEngine.playBeep(ToneGenerator.TONE_CDMA_EMERGENCY_RINGBACK, 450)
-                            if (!state.paAudioMuted) {
-                                voiceEngine.speak(if (es) ann.textEs else ann.textEn)
-                            }
                             _uiState.update { it.copy(roomState = startedRace) }
+                            voiceEngine.playBeep(ToneGenerator.TONE_CDMA_EMERGENCY_RINGBACK, 450)
+                            if (canSpeakOnDevice) {
+                                voiceEngine.speak(if (es) ann.textEs else ann.textEn, flush = true)
+                            }
+                            repo.saveRoom(startedRace)
+                        }
+                        SessionPhase.RACING -> {
+                            lastAutoEndedPhaseStartMs = room.phaseStartTimeMs
+                            val ann = PaAnnouncement(
+                                id = "pa_${now}_race_end",
+                                textEs = "¡Fin de manga! Bandera a cuadros",
+                                textEn = "End of heat! Checkered flag",
+                                timestampMs = now
+                            )
+                            lastSpokenPaAnnouncementId = ann.id
+                            val finishedRace = room.copy(
+                                sessionPhase = SessionPhase.IDLE,
+                                flagState = FlagState.GREEN,
+                                phaseEndTimeMs = 0L,
+                                friendlyModeActive = false,
+                                lastPaAnnouncement = ann,
+                                updatedAtMs = now
+                            )
+                            _uiState.update {
+                                it.copy(
+                                    roomState = finishedRace,
+                                    statusBannerMessage = if (es) "¡Fin de manga! Bandera a cuadros" else "Heat finished! Checkered flag"
+                                )
+                            }
+                            voiceEngine.playStadiumApplause()
+                            if (canSpeakOnDevice) {
+                                voiceEngine.speak(if (es) ann.textEs else ann.textEn, flush = true)
+                            }
+                            repo.saveRoom(finishedRace)
                         }
                         else -> Unit
                     }
@@ -298,14 +364,16 @@ class MxProViewModel(application: Application) : AndroidViewModel(application) {
             voiceEngine.playRemotePaClipIfNew(fan.paClipBase64, fan.paClipTimestampMs)
         }
 
-        // Sync live multi-device PA TTS announcements across Pilots, Antenna 1, Antenna 2, Director & Fans
+        // Sync live multi-device PA TTS announcements across Pilots, Director & Fans
+        // Dedicated finish-line Antennas stay silent during active heats/races (only transmit to Director)
         val paAnn = room.lastPaAnnouncement
+        val suppressAntennaSpeech = _uiState.value.isAntennaRoleActive && room.sessionPhase != SessionPhase.IDLE
         if (paAnn != null && paAnn.id.isNotBlank() && paAnn.id != lastSpokenPaAnnouncementId &&
             syncedNowMs() - paAnn.timestampMs < 15_000L
         ) {
             lastSpokenPaAnnouncementId = paAnn.id
             val esAnn = StringsProvider.current(_uiState.value.languageOverride).isSpanish
-            if (!_uiState.value.paAudioMuted && _uiState.value.antennaVoiceEnabled) {
+            if (!suppressAntennaSpeech && !_uiState.value.paAudioMuted && _uiState.value.antennaVoiceEnabled) {
                 if (paAnn.isHotlap) {
                     voiceEngine.playBeep(ToneGenerator.TONE_PROP_ACK, 220)
                 }
@@ -863,14 +931,58 @@ class MxProViewModel(application: Application) : AndroidViewModel(application) {
 
     // --- Lap Recording (Manual & Antenna) ---
     fun recordManualLapForCurrentRider() {
-        val rider = _uiState.value.currentRider ?: return
+        val es = StringsProvider.current(_uiState.value.languageOverride).isSpanish
+        val rider = _uiState.value.currentRider
+        if (rider == null) {
+            _uiState.update {
+                it.copy(statusBannerMessage = if (es) "Inicia sesión como piloto primero" else "Sign in as rider first")
+            }
+            return
+        }
         recordLapForRider(rider.id, syncedNowMs(), "manual", emptyList())
+    }
+
+    fun stopManualChronoForCurrentRider() {
+        val state = _uiState.value
+        val rider = state.currentRider ?: return
+        val es = StringsProvider.current(state.languageOverride).isSpanish
+        val room = state.roomState
+        val existing = room.activeRiders[rider.id]
+        val now = syncedNowMs()
+        if (existing == null || existing.lastPassTimestampMs <= 0L) {
+            _uiState.update {
+                it.copy(statusBannerMessage = if (es) "El crono manual ya está detenido" else "Manual timer already stopped")
+            }
+            return
+        }
+        val stoppedRider = existing.copy(lastPassTimestampMs = 0L)
+        val updatedRoom = room.copy(
+            activeRiders = room.activeRiders + (rider.id to stoppedRider),
+            updatedAtMs = now
+        )
+        _uiState.update {
+            it.copy(
+                roomState = updatedRoom,
+                statusBannerMessage = if (es) "Crono manual detenido" else "Manual timer stopped"
+            )
+        }
+        if (!state.paAudioMuted && state.antennaVoiceEnabled) {
+            voiceEngine.speak(if (es) "Cronómetro detenido" else "Timer stopped")
+        }
+        viewModelScope.launch {
+            repo.saveRoom(updatedRoom)
+            repo.upsertRoomRider(state.activeCircuit.id, stoppedRider)
+        }
     }
 
     fun handleVisionDetection(station: AntennaStation, result: VisionDetectionResult) {
         val circuitId = _uiState.value.activeCircuit.id
+        val es = StringsProvider.current(_uiState.value.languageOverride).isSpanish
+        val roomPhase = _uiState.value.roomState.sessionPhase
+        val isRaceActive = roomPhase != SessionPhase.IDLE
+        val antennaCfg = _uiState.value.antennas[station.id]
+
         viewModelScope.launch {
-            // Update antenna telemetry with detected colors + snapshot + photoFinish
             val colorNames = result.detectedColors.map { it.colorName }
             val colorHexes = result.detectedColors.map { it.hex }
             val labArr = JSONArray().apply {
@@ -886,7 +998,10 @@ class MxProViewModel(application: Application) : AndroidViewModel(application) {
                     )
                 }
             }
-            val patch = JSONObject().apply {
+            val patchObj = JSONObject().apply {
+                put("kind", "telemetry")
+                put("circuitId", circuitId)
+                put("antennaId", station.id)
                 put("lastSnapshotBase64", result.snapshotBase64)
                 if (result.photoFinishBase64 != null) {
                     put("lastPhotoFinishBase64", result.photoFinishBase64)
@@ -900,11 +1015,15 @@ class MxProViewModel(application: Application) : AndroidViewModel(application) {
                 put("lastTriggerTimestampMs", result.triggerTimestampMs)
                 put("matchedRiderId", result.matchedProfile?.riderId ?: "")
                 put("matchedRiderName", result.matchedProfile?.riderName ?: "")
+                put("lastHeartbeatMs", syncedNowMs())
+                put("isCalibrated", true)
                 put("status", "DETECTING")
-            }.toString()
-            repo.patchAntennaTelemetry(circuitId, station.id, patch)
+            }
+            val cloudOk = repo.patchAntennaTelemetry(circuitId, station.id, patchObj.toString())
+            val lanOk = sendViaLanIfAvailable(patchObj)
 
-            if (result.detectedColors.isNotEmpty()) {
+            var capCloudOk = cloudOk
+            if (result.detectedColors.isNotEmpty() && antennaCfg?.detectionMode != DetectionMode.ANY_PASS) {
                 val capture = CapturedPassSample(
                     id = "cap_${result.triggerTimestampMs}_${station.id}",
                     timestampMs = result.triggerTimestampMs,
@@ -913,14 +1032,44 @@ class MxProViewModel(application: Application) : AndroidViewModel(application) {
                     snapshotBase64 = result.photoFinishBase64 ?: result.snapshotBase64,
                     detectedDorsal = result.detectedDorsal
                 )
-                repo.pushCapturedPass(circuitId, capture)
+                capCloudOk = repo.pushCapturedPass(circuitId, capture) || cloudOk
+                sendViaLanIfAvailable(
+                    JSONObject().apply {
+                        put("kind", "capture")
+                        put("circuitId", circuitId)
+                        put("antennaId", station.id)
+                        put("id", capture.id)
+                        put("timestampMs", capture.timestampMs)
+                        put("samples", labArr)
+                        put("snapshotBase64", capture.snapshotBase64)
+                        put("detectedDorsal", capture.detectedDorsal)
+                    }
+                )
+            }
+
+            val anySent = capCloudOk || lanOk
+            val feedbackText = when {
+                cloudOk && lanOk -> if (es) "✓ Captura enviada (Nube + Wi-Fi)" else "✓ Capture sent (Cloud + Wi-Fi)"
+                cloudOk -> if (es) "✓ Captura enviada a Dirección" else "✓ Capture sent to Director"
+                lanOk -> if (es) "✓ Captura enviada por Wi-Fi Directo" else "✓ Capture sent via Direct Wi-Fi"
+                else -> if (es) "⚠ Captura sin envío: ${repo.lastRtdbError() ?: "sin red"}" else "⚠ Not sent: ${repo.lastRtdbError() ?: "offline"}"
+            }
+            _uiState.update {
+                it.copy(
+                    antennaSyncOk = anySent,
+                    antennaUploadCount = if (anySent) it.antennaUploadCount + 1 else it.antennaUploadCount,
+                    antennaLastSyncError = if (cloudOk) null else repo.lastRtdbError(),
+                    lastCaptureFeedback = feedbackText,
+                    lastCaptureFeedbackAtMs = SystemClock.elapsedRealtime(),
+                    lastCaptureOk = anySent
+                )
+            }
+            // Say "Captura enviada" ONLY outside an active race; never announce colors on trackside speaker during race!
+            if (!isRaceActive && _uiState.value.antennaVoiceEnabled && !_uiState.value.paAudioMuted) {
+                voiceEngine.speak(if (es) "Captura enviada" else "Capture sent")
             }
 
             val activeList = _uiState.value.roomState.activeRiders.values.toList()
-            val antennaCfg = _uiState.value.antennas[station.id]
-            val es = StringsProvider.current(_uiState.value.languageOverride).isSpanish
-
-            // Layer 2: On-Device ML Kit Dorsal OCR tie-breaker
             val ocrNorm = result.detectedDorsal.trimStart('0').ifBlank { result.detectedDorsal }
             val ocrMatchedRider = if (ocrNorm.isNotBlank()) {
                 activeList.firstOrNull { r ->
@@ -929,12 +1078,38 @@ class MxProViewModel(application: Application) : AndroidViewModel(application) {
                 }
             } else null
 
+            val mode = antennaCfg?.detectionMode ?: DetectionMode.ANY_PASS
+            val singleTarget = antennaCfg?.singleTargetColorName.orEmpty()
             val colorMatched = result.matchedProfile
-            val resolvedRiderId = when {
-                ocrMatchedRider != null && (colorMatched == null || result.matchConfidence < 0.72f) -> ocrMatchedRider.riderId
-                colorMatched != null && result.matchConfidence >= 0.45f -> colorMatched.riderId
-                antennaCfg?.detectionMode == DetectionMode.ANY_PASS && activeList.size == 1 -> activeList.first().riderId
-                else -> null
+            val singleColorMatchesTarget = if (mode == DetectionMode.SINGLE_COLOR && singleTarget.isNotBlank()) {
+                result.detectedColors.any { it.colorName.equals(singleTarget, ignoreCase = true) } || colorMatched != null
+            } else true
+
+            val resolvedRiderId = when (mode) {
+                DetectionMode.ANY_PASS -> {
+                    when {
+                        ocrMatchedRider != null -> ocrMatchedRider.riderId
+                        colorMatched != null && result.matchConfidence >= 0.45f -> colorMatched.riderId
+                        activeList.size == 1 -> activeList.first().riderId
+                        else -> null
+                    }
+                }
+                DetectionMode.SINGLE_COLOR -> {
+                    if (!singleColorMatchesTarget) null
+                    else when {
+                        colorMatched != null && result.matchConfidence >= 0.40f -> colorMatched.riderId
+                        ocrMatchedRider != null -> ocrMatchedRider.riderId
+                        singleTarget.isNotBlank() && activeList.size == 1 -> activeList.first().riderId
+                        else -> null
+                    }
+                }
+                DetectionMode.FAIRING_COLOR -> {
+                    when {
+                        colorMatched != null && result.matchConfidence >= 0.42f -> colorMatched.riderId
+                        ocrMatchedRider != null -> ocrMatchedRider.riderId
+                        else -> null
+                    }
+                }
             }
 
             if (resolvedRiderId != null) {
@@ -947,12 +1122,7 @@ class MxProViewModel(application: Application) : AndroidViewModel(application) {
                     repo.upsertRoomRider(circuitId, existingEntry.copy(colorConfirmed = true))
                 }
                 recordLapForRider(resolvedRiderId, result.triggerTimestampMs, station.id, colorNames)
-            } else {
-                // Unidentified pass: announce locally first, then run Layer 3 Gemini AI Steward in background!
-                val cTxt = colorNames.joinToString(" ")
-                if (_uiState.value.antennaVoiceEnabled && !_uiState.value.paAudioMuted) {
-                    voiceEngine.speak(if (es) "Paso detectado $cTxt" else "Pass detected $cTxt")
-                }
+            } else if (mode != DetectionMode.SINGLE_COLOR || singleColorMatchesTarget) {
                 val pfPhoto = result.photoFinishBase64 ?: result.snapshotBase64
                 if (antennaCfg?.aiStewardEnabled != false && pfPhoto.isNotBlank() && activeList.isNotEmpty()) {
                     resolveDoubtfulPassWithAi(
@@ -1093,22 +1263,68 @@ class MxProViewModel(application: Application) : AndroidViewModel(application) {
         _uiState.update { it.copy(soloAntennaDetectionMode = mode) }
     }
 
-    /**
-     * Allows a solo pilot or small group training without Director to place a phone as a finish-line
-     * camera antenna directly from PilotScreen, supporting ANY_PASS or CIE Lab / Single Color matching.
-     */
+    fun updateSoloTargetColor(sample: LabSample?) {
+        _uiState.update { it.copy(soloTargetColor = sample) }
+    }
+
+    fun setAntennaRoleActive(active: Boolean) {
+        _uiState.update { it.copy(isAntennaRoleActive = active) }
+    }
+
     fun handleSoloPilotVisionDetection(result: VisionDetectionResult) {
         val state = _uiState.value
-        val currentRider = state.currentRider
+        val es = StringsProvider.current(state.languageOverride).isSpanish
+        val currentRider = state.currentRider ?: return
         val matched = result.matchedProfile
-        val targetRiderId = when (state.soloAntennaDetectionMode) {
-            DetectionMode.ANY_PASS -> currentRider?.id
-            DetectionMode.FAIRING_COLOR, DetectionMode.SINGLE_COLOR -> matched?.riderId ?: currentRider?.id
-        } ?: return
-        val targetName = state.riders.firstOrNull { it.id == targetRiderId }?.name ?: currentRider?.name ?: ""
+        val detectedNames = result.detectedColors.map { it.colorName }
+
+        val targetRiderId: String? = when (state.soloAntennaDetectionMode) {
+            DetectionMode.ANY_PASS -> currentRider.id
+            DetectionMode.SINGLE_COLOR -> {
+                val soloColor = state.soloTargetColor
+                when {
+                    soloColor != null -> {
+                        val matchesSolo = result.detectedColors.any {
+                            it.colorName.equals(soloColor.colorName, ignoreCase = true)
+                        }
+                        if (matchesSolo) currentRider.id else null
+                    }
+                    matched != null && result.matchConfidence >= 0.40f -> matched.riderId
+                    else -> null
+                }
+            }
+            DetectionMode.FAIRING_COLOR -> {
+                if (matched != null && result.matchConfidence >= 0.40f) matched.riderId else null
+            }
+        }
+
+        if (targetRiderId == null) {
+            val detLabel = detectedNames.firstOrNull() ?: (if (es) "sin color" else "no color")
+            val expLabel = state.soloTargetColor?.colorName ?: ""
+            _uiState.update {
+                it.copy(
+                    lastCaptureFeedback = if (expLabel.isNotBlank()) {
+                        if (es) "Ignorado: pasó $detLabel (esperado $expLabel)" else "Ignored: $detLabel ≠ $expLabel"
+                    } else {
+                        if (es) "Color sin perfil asignado ($detLabel)" else "Unassigned color ($detLabel)"
+                    },
+                    lastCaptureFeedbackAtMs = SystemClock.elapsedRealtime(),
+                    lastCaptureOk = false
+                )
+            }
+            return
+        }
+
+        val targetName = state.riders.firstOrNull { it.id == targetRiderId }?.name ?: currentRider.name
         val circuitId = state.activeCircuit.id
-        val colorNames = result.detectedColors.map { it.colorName }
         viewModelScope.launch {
+            _uiState.update {
+                it.copy(
+                    lastCaptureFeedback = if (es) "✓ Captura registrada ($targetName)" else "✓ Capture logged ($targetName)",
+                    lastCaptureFeedbackAtMs = SystemClock.elapsedRealtime(),
+                    lastCaptureOk = true
+                )
+            }
             if (result.detectedColors.isNotEmpty()) {
                 val capture = CapturedPassSample(
                     id = "cap_${result.triggerTimestampMs}_solo",
@@ -1128,7 +1344,7 @@ class MxProViewModel(application: Application) : AndroidViewModel(application) {
                 }.toString()
                 repo.patchAntennaTelemetry(circuitId, AntennaStation.ANTENA_TEMP.id, patch)
             }
-            recordLapForRider(targetRiderId, result.triggerTimestampMs, "solo_phone", colorNames)
+            recordLapForRider(targetRiderId, result.triggerTimestampMs, "solo_phone", detectedNames)
         }
     }
 
@@ -1142,14 +1358,25 @@ class MxProViewModel(application: Application) : AndroidViewModel(application) {
             val state = _uiState.value
             val circuit = state.activeCircuit
             val room = state.roomState
-            val roomRider = room.activeRiders[riderId] ?: return@launch
-            val riderAccount = state.riders.firstOrNull { it.id == riderId } ?: return@launch
+            val riderAccount = state.riders.firstOrNull { it.id == riderId }
+                ?: state.currentRider?.takeIf { it.id == riderId }
+                ?: return@launch
             val bike = state.allBikes.firstOrNull { it.id == riderAccount.activeBikeId }
                 ?: state.allBikes.firstOrNull { it.riderId == riderId }
+            val roomRider = room.activeRiders[riderId] ?: ActiveRoomRider(
+                riderId = riderAccount.id,
+                riderName = riderAccount.name,
+                dorsal = bike?.dorsal ?: "01",
+                bikeModel = bike?.modelName ?: "Losi Promoto-MX",
+                discipline = bike?.discipline ?: circuit.surface,
+                setupSummary = bike?.buildSetupSummary() ?: "",
+                sessionStartMs = passTimestampMs
+            )
+            val suppressAntennaSpeech = state.isAntennaRoleActive && room.sessionPhase != SessionPhase.IDLE
 
             val prevPass = roomRider.lastPassTimestampMs
             if (prevPass <= 0L) {
-                // First crossing starts the flying lap clock + broadcasts start announcement to Pilots & Antennas
+                // First crossing starts the flying lap clock immediately (optimistic local update + sync)
                 val nowAnn = syncedNowMs()
                 val ann = PaAnnouncement(
                     id = "pa_${nowAnn}_${riderId.take(4)}",
@@ -1163,17 +1390,24 @@ class MxProViewModel(application: Application) : AndroidViewModel(application) {
                     sessionStartMs = if (roomRider.sessionStartMs <= 0L) passTimestampMs else roomRider.sessionStartMs
                 )
                 val nextRoom = room.copy(
+                    circuitId = circuit.id,
                     activeRiders = room.activeRiders + (riderId to started),
                     lastPaAnnouncement = ann,
                     updatedAtMs = passTimestampMs
                 )
-                repo.saveRoom(nextRoom)
                 val es = StringsProvider.current(state.languageOverride).isSpanish
                 lastSpokenPaAnnouncementId = ann.id
-                if (!state.paAudioMuted && state.antennaVoiceEnabled) {
+                _uiState.update { st ->
+                    st.copy(
+                        roomState = nextRoom,
+                        statusBannerMessage = if (es) "Crono en marcha (${riderAccount.name})" else "Timer running (${riderAccount.name})"
+                    )
+                }
+                if (!suppressAntennaSpeech && !state.paAudioMuted && state.antennaVoiceEnabled) {
                     voiceEngine.speak(if (es) ann.textEs else ann.textEn, flush = false)
                 }
-                syncCircuitData(circuit.id)
+                repo.saveRoom(nextRoom)
+                repo.upsertRoomRider(circuit.id, started)
                 return@launch
             }
 
@@ -1292,6 +1526,7 @@ class MxProViewModel(application: Application) : AndroidViewModel(application) {
                 isHotlap = isHotlap
             )
             val updatedRoom = room.copy(
+                circuitId = circuit.id,
                 weeklyHotlapMs = if (isWeeklyHotlap) lapMs else room.weeklyHotlapMs,
                 weeklyHotlapRider = if (isWeeklyHotlap) riderAccount.name else room.weeklyHotlapRider,
                 mxRecordMs = if (roomRider.discipline == SurfaceType.MX && (room.mxRecordMs <= 0L || lapMs < room.mxRecordMs)) lapMs else room.mxRecordMs,
@@ -1302,6 +1537,24 @@ class MxProViewModel(application: Application) : AndroidViewModel(application) {
                 activeRiders = room.activeRiders + (riderId to finalRoomRider),
                 updatedAtMs = passTimestampMs
             )
+
+            val es = StringsProvider.current(state.languageOverride).isSpanish
+            lastSpokenPaAnnouncementId = ann.id
+            _uiState.update { st ->
+                st.copy(
+                    roomState = updatedRoom,
+                    circuitLaps = (listOf(lap) + st.circuitLaps).distinctBy { it.id },
+                    statusBannerMessage = "${formatLapMs(lapMs)} (${riderAccount.name})"
+                )
+            }
+            if (!suppressAntennaSpeech && !state.paAudioMuted && state.antennaVoiceEnabled) {
+                if (isHotlap) {
+                    voiceEngine.playBeep(ToneGenerator.TONE_PROP_ACK, 200)
+                }
+                voiceEngine.speak(if (es) ann.textEs else ann.textEn, flush = false)
+            }
+
+            repo.recordLap(lap)
             repo.saveRoom(updatedRoom)
 
             if (bike != null) {
@@ -1323,26 +1576,47 @@ class MxProViewModel(application: Application) : AndroidViewModel(application) {
                     lastSeenAt = passTimestampMs
                 )
             )
-
-            // Speak immediately on triggering phone (Antennas & Pilot phones speak once thanks to lastSpokenPaAnnouncementId)
-            val es = StringsProvider.current(state.languageOverride).isSpanish
-            lastSpokenPaAnnouncementId = ann.id
-            if (!state.paAudioMuted && state.antennaVoiceEnabled) {
-                if (isHotlap) {
-                    voiceEngine.playBeep(ToneGenerator.TONE_PROP_ACK, 200)
-                }
-                voiceEngine.speak(if (es) ann.textEs else ann.textEn, flush = false)
-            }
             syncCircuitData(circuit.id)
         }
     }
 
+    private fun explainGameModeForSpeech(mode: GameMode): Pair<String, String> = when (mode) {
+        GameMode.NORMAL ->
+            "Modo Carrera Normal activado. Todos los pilotos completan vueltas contra el crono hasta finalizar el tiempo de la manga." to
+                "Normal Race mode active. Riders complete timed laps until the heat clock ends."
+        GameMode.TIME_BOMB_45 ->
+            "Modo Bomba Reloj activado. Cada vuelta debe ser menor de cuarenta y cinco segundos, si la superas la bomba explota y quedas eliminado." to
+                "Time Bomb mode active. Complete every lap under forty five seconds or you are eliminated."
+        GameMode.ELIMINATION_60 ->
+            "Modo Eliminación activado. Cada sesenta segundos queda eliminado el piloto que vaya en última posición." to
+                "Elimination mode active. Every sixty seconds the last place rider is eliminated."
+        GameMode.KING_OF_TRACK ->
+            "Modo Rey de la Pista activado. El piloto con la vuelta más rápida ostenta la corona hasta que otro piloto bata su tiempo." to
+                "King of the Track mode active. Fastest lap holds the crown until someone beats it."
+        GameMode.CONSISTENCY_DUEL ->
+            "Modo Duelo Metrónomo activado. Gana el piloto más regular con menor diferencia entre todas sus vueltas." to
+                "Metronome Consistency Duel active. Highest lap-to-lap regularity wins."
+        GameMode.TURBO_SPRINT_3 ->
+            "Modo Turbo Sprint activado. Manga explosiva al límite a solo tres vueltas." to
+                "Turbo Sprint mode active. Explosive all-out race over three laps."
+        GameMode.PURSUIT_HUNTER ->
+            "Modo Caza al Líder activado. Persigue y supera el mejor tiempo del líder de la pista." to
+                "Pursuit Hunter mode active. Chase down and beat the track leader's best time."
+    }
+
     // --- Friendly Mode (No Director) ---
     fun runFriendly10sCalibration() {
-        val circuitId = _uiState.value.activeCircuit.id
         val es = StringsProvider.current(_uiState.value.languageOverride).isSpanish
+        if (_uiState.value.roomState.sessionPhase != SessionPhase.IDLE) {
+            _uiState.update {
+                it.copy(statusBannerMessage = if (es) "Sesión activa en curso: no se puede calibrar ni organizar manga" else "Session active: stop current session first")
+            }
+            return
+        }
+        val circuitId = _uiState.value.activeCircuit.id
         viewModelScope.launch {
             for (s in 10 downTo 1) {
+                if (_uiState.value.roomState.sessionPhase != SessionPhase.IDLE) return@launch
                 voiceEngine.speak(s.toString())
                 delay(1000L)
             }
@@ -1359,30 +1633,42 @@ class MxProViewModel(application: Application) : AndroidViewModel(application) {
     fun startFriendlyRandomGate() = startRandomMxGate(friendly = true)
 
     fun startFriendlyDirectHeat(heatDurationSec: Int) {
+        val state = _uiState.value
+        val es = StringsProvider.current(state.languageOverride).isSpanish
+        if (state.roomState.sessionPhase != SessionPhase.IDLE) {
+            _uiState.update {
+                it.copy(statusBannerMessage = if (es) "Ya hay una sesión en curso — pulsa STOP primero" else "Session already active — press STOP first")
+            }
+            return
+        }
         val now = syncedNowMs()
+        val (modeEs, modeEn) = explainGameModeForSpeech(state.roomState.gameMode)
         val ann = PaAnnouncement(
             id = "pa_${now}_friendlyheat",
-            textEs = "Manga libre iniciada sin Director, ${heatDurationSec / 60} minutos",
-            textEn = "Open group heat started without Director, ${heatDurationSec / 60} minutes",
+            textEs = "¡Salida! Manga libre de ${heatDurationSec / 60} minutos. $modeEs",
+            textEn = "Start! Open group heat for ${heatDurationSec / 60} minutes. $modeEn",
             timestampMs = now
         )
         lastSpokenPaAnnouncementId = ann.id
-        val room = _uiState.value.roomState.copy(
-            circuitId = _uiState.value.activeCircuit.id,
+        val room = state.roomState.copy(
+            circuitId = state.activeCircuit.id,
             sessionPhase = SessionPhase.RACING,
             flagState = FlagState.GREEN,
             heatDurationSec = heatDurationSec,
             phaseStartTimeMs = now,
             phaseEndTimeMs = now + heatDurationSec * 1000L,
+            gateDropTimeMs = now,
             friendlyModeActive = true,
             lastPaAnnouncement = ann,
             updatedAtMs = now
         )
+        _uiState.update { it.copy(roomState = room) }
+        voiceEngine.playBeep(ToneGenerator.TONE_CDMA_EMERGENCY_RINGBACK, 400)
+        if (!state.isAntennaRoleActive && !state.paAudioMuted) {
+            voiceEngine.speak(if (es) ann.textEs else ann.textEn, flush = true)
+        }
         viewModelScope.launch {
             repo.saveRoom(room)
-            val es = StringsProvider.current(_uiState.value.languageOverride).isSpanish
-            if (!_uiState.value.paAudioMuted) voiceEngine.speak(if (es) ann.textEs else ann.textEn)
-            syncCircuitData(room.circuitId)
         }
     }
 
@@ -1432,6 +1718,87 @@ class MxProViewModel(application: Application) : AndroidViewModel(application) {
         voiceEngine.speak(picked)
     }
 
+    // --- Local Wi-Fi / Hotspot LAN Bridge + Antenna Sync ---
+    fun startDirectorLanBridge() {
+        val ip = lanBridge.getLocalIpv4Address()
+        _uiState.update {
+            it.copy(directorLanEndpoint = ip?.let { addr -> "$addr:${LocalLanAntennaBridge.HTTP_PORT}" })
+        }
+        lanBridge.startDirectorServer(
+            onAntennaTelemetry = { cId, aId, patch ->
+                val activeCid = _uiState.value.activeCircuit.id
+                if (cId == activeCid) {
+                    val cur = _uiState.value.antennas[aId] ?: AntennaConfig(antennaId = aId, circuitId = cId)
+                    val merged = AntennaConfig(
+                        antennaId = aId,
+                        circuitId = cId,
+                        status = patch.optString("status", cur.status),
+                        isCalibrated = if (patch.has("isCalibrated")) patch.optBoolean("isCalibrated") else cur.isCalibrated,
+                        calibrateCommandAtMs = cur.calibrateCommandAtMs,
+                        detectionMode = cur.detectionMode,
+                        roiSize = cur.roiSize,
+                        roiHeight = cur.roiHeight,
+                        lineOrientation = cur.lineOrientation,
+                        linePosition = cur.linePosition,
+                        colorZoneX = cur.colorZoneX,
+                        colorZoneY = cur.colorZoneY,
+                        singleTargetColorName = cur.singleTargetColorName,
+                        directionFilter = cur.directionFilter,
+                        aiStewardEnabled = cur.aiStewardEnabled,
+                        antiVibration = cur.antiVibration,
+                        lastSnapshotBase64 = patch.optString("lastSnapshotBase64", "").ifBlank { cur.lastSnapshotBase64 },
+                        lastPhotoFinishBase64 = patch.optString("lastPhotoFinishBase64", "").ifBlank { cur.lastPhotoFinishBase64 },
+                        activeFps = if (patch.has("activeFps")) patch.optInt("activeFps", cur.activeFps) else cur.activeFps,
+                        lastDetectedDorsal = patch.optString("lastDetectedDorsal", "").ifBlank { cur.lastDetectedDorsal },
+                        lastHeartbeatMs = syncedNowMs()
+                    )
+                    _uiState.update { st ->
+                        val updatedMap = st.antennas + (aId to merged)
+                        val updatedMono = st.antennaLastChangeMonoMs + (aId to SystemClock.elapsedRealtime())
+                        st.copy(antennas = updatedMap, antennaLastChangeMonoMs = updatedMono)
+                    }
+                }
+            },
+            onCaptureSample = { cId, json ->
+                if (cId == _uiState.value.activeCircuit.id) {
+                    val parsed = repo.rtdb.parseAntennaConfigSafe(cId, json.optString("antennaId", "antena_1"), JSONObject().apply {
+                        put("lastDetectedLab", json.optJSONArray("samples") ?: JSONArray())
+                    })
+                    val cap = CapturedPassSample(
+                        id = json.optString("id", "lan_${syncedNowMs()}"),
+                        timestampMs = json.optLong("timestampMs", syncedNowMs()),
+                        antennaId = json.optString("antennaId", "antena_1"),
+                        samples = parsed.lastDetectedLab,
+                        snapshotBase64 = json.optString("snapshotBase64", ""),
+                        detectedDorsal = json.optString("detectedDorsal", "")
+                    )
+                    _uiState.update { st ->
+                        st.copy(capturedPasses = (listOf(cap) + st.capturedPasses).distinctBy { it.id }.take(12))
+                    }
+                }
+            }
+        )
+    }
+
+    fun stopDirectorLanBridge() {
+        lanBridge.stopDirectorServer()
+        _uiState.update { it.copy(directorLanEndpoint = null) }
+    }
+
+    private suspend fun sendViaLanIfAvailable(payload: JSONObject): Boolean {
+        val nowMono = SystemClock.elapsedRealtime()
+        if (discoveredDirectorLanIp == null && nowMono - lastLanProbeMonoMs > 8_000L) {
+            lastLanProbeMonoMs = nowMono
+            discoveredDirectorLanIp = lanBridge.discoverDirectorIp()
+        }
+        val ip = discoveredDirectorLanIp ?: return false
+        val ok = lanBridge.postToDirectorLan(ip, payload)
+        if (!ok) {
+            discoveredDirectorLanIp = null
+        }
+        return ok
+    }
+
     // --- Antenna Screen Controls ---
     fun selectAntennaStation(station: AntennaStation) {
         val circuitId = _uiState.value.activeCircuit.id
@@ -1446,15 +1813,29 @@ class MxProViewModel(application: Application) : AndroidViewModel(application) {
         _uiState.update { st ->
             st.copy(
                 selectedAntennaStation = station,
+                isAntennaRoleActive = true,
                 antennas = st.antennas + (station.id to seeded)
             )
         }
         viewModelScope.launch {
             val ok = repo.saveAntennaConfig(seeded)
+            val lanPayload = JSONObject().apply {
+                put("kind", "telemetry")
+                put("circuitId", circuitId)
+                put("antennaId", station.id)
+                put("status", "ONLINE_WAIT_CAL")
+                put("isCalibrated", seeded.isCalibrated)
+                put("lastHeartbeatMs", nowMs)
+            }
+            val lanOk = sendViaLanIfAvailable(lanPayload)
             _uiState.update {
                 it.copy(
-                    antennaSyncOk = ok,
-                    antennaLastSyncError = if (ok) null else (repo.lastRtdbError() ?: "RTDB write error")
+                    antennaSyncOk = ok || lanOk,
+                    antennaLastSyncError = when {
+                        ok -> null
+                        lanOk -> "Wi-Fi Directo OK (${discoveredDirectorLanIp}) • Nube: ${repo.lastRtdbError()}"
+                        else -> (repo.lastRtdbError() ?: "RTDB write error")
+                    }
                 )
             }
         }
@@ -1485,20 +1866,26 @@ class MxProViewModel(application: Application) : AndroidViewModel(application) {
             )
         }
         viewModelScope.launch {
-            val patch = JSONObject().apply {
+            val patchObj = JSONObject().apply {
+                put("kind", "telemetry")
                 put("antennaId", station.id)
                 put("circuitId", circuitId)
                 put("isCalibrated", isCalibrated)
                 put("status", effectiveStatus)
                 put("lastHeartbeatMs", nowMs)
-            }.toString()
-            val ok = repo.patchAntennaTelemetry(circuitId, station.id, patch)
+            }
+            val ok = repo.patchAntennaTelemetry(circuitId, station.id, patchObj.toString())
+            val lanOk = if (!ok) sendViaLanIfAvailable(patchObj) else false
             _uiState.update {
                 it.copy(
                     isOnline = ok,
-                    antennaSyncOk = ok,
-                    antennaUploadCount = if (ok) it.antennaUploadCount + 1 else it.antennaUploadCount,
-                    antennaLastSyncError = if (ok) null else (repo.lastRtdbError() ?: "RTDB heartbeat failed")
+                    antennaSyncOk = ok || lanOk,
+                    antennaUploadCount = if (ok || lanOk) it.antennaUploadCount + 1 else it.antennaUploadCount,
+                    antennaLastSyncError = when {
+                        ok -> null
+                        lanOk -> "Wi-Fi Directo OK (${discoveredDirectorLanIp}) • Nube: ${repo.lastRtdbError()}"
+                        else -> (repo.lastRtdbError() ?: "RTDB heartbeat failed")
+                    }
                 )
             }
         }
@@ -1520,17 +1907,19 @@ class MxProViewModel(application: Application) : AndroidViewModel(application) {
             )
         }
         viewModelScope.launch {
-            val patch = JSONObject().apply {
+            val patchObj = JSONObject().apply {
+                put("kind", "telemetry")
                 put("antennaId", station.id)
                 put("circuitId", circuitId)
                 put("isCalibrated", true)
                 put("status", "ONLINE_READY")
                 put("lastHeartbeatMs", nowMs)
-            }.toString()
-            val ok = repo.patchAntennaTelemetry(circuitId, station.id, patch)
+            }
+            val ok = repo.patchAntennaTelemetry(circuitId, station.id, patchObj.toString())
+            val lanOk = if (!ok) sendViaLanIfAvailable(patchObj) else false
             _uiState.update {
                 it.copy(
-                    antennaSyncOk = ok,
+                    antennaSyncOk = ok || lanOk,
                     antennaLastSyncError = if (ok) null else repo.lastRtdbError()
                 )
             }
@@ -1554,7 +1943,8 @@ class MxProViewModel(application: Application) : AndroidViewModel(application) {
             )
         }
         viewModelScope.launch {
-            val patch = JSONObject().apply {
+            val patchObj = JSONObject().apply {
+                put("kind", "telemetry")
                 put("antennaId", station.id)
                 put("circuitId", circuitId)
                 put("lastSnapshotBase64", base64)
@@ -1562,14 +1952,19 @@ class MxProViewModel(application: Application) : AndroidViewModel(application) {
                 put("activeFps", fps)
                 put("isCalibrated", isCalibrated)
                 put("status", nextStatus)
-            }.toString()
-            val ok = repo.patchAntennaTelemetry(circuitId, station.id, patch)
+            }
+            val ok = repo.patchAntennaTelemetry(circuitId, station.id, patchObj.toString())
+            val lanOk = if (!ok) sendViaLanIfAvailable(patchObj) else false
             _uiState.update {
                 it.copy(
                     isOnline = ok,
-                    antennaSyncOk = ok,
-                    antennaUploadCount = if (ok) it.antennaUploadCount + 1 else it.antennaUploadCount,
-                    antennaLastSyncError = if (ok) null else (repo.lastRtdbError() ?: "RTDB snapshot failed")
+                    antennaSyncOk = ok || lanOk,
+                    antennaUploadCount = if (ok || lanOk) it.antennaUploadCount + 1 else it.antennaUploadCount,
+                    antennaLastSyncError = when {
+                        ok -> null
+                        lanOk -> "Wi-Fi Directo OK (${discoveredDirectorLanIp}) • Nube: ${repo.lastRtdbError()}"
+                        else -> (repo.lastRtdbError() ?: "RTDB snapshot failed")
+                    }
                 )
             }
         }
@@ -1647,33 +2042,53 @@ class MxProViewModel(application: Application) : AndroidViewModel(application) {
         antiVibration: AntiVibrationLevel? = null,
         flagState: FlagState? = null
     ) {
-        val current = _uiState.value.roomState
+        val state = _uiState.value
+        val current = state.roomState
+        val es = StringsProvider.current(state.languageOverride).isSpanish
+        if (current.sessionPhase != SessionPhase.IDLE && (gameMode != null || heatDurationSec != null)) {
+            _uiState.update {
+                it.copy(statusBannerMessage = if (es) "Pulsa STOP antes de cambiar modo o duración" else "Press STOP before changing mode or duration")
+            }
+            return
+        }
         val now = syncedNowMs()
-        val flagAnn = if (flagState != null && flagState != current.flagState) {
-            PaAnnouncement(
+        val ann: PaAnnouncement? = when {
+            flagState != null && flagState != current.flagState -> PaAnnouncement(
                 id = "pa_${now}_flag",
                 textEs = if (flagState == FlagState.YELLOW) "Atención, bandera amarilla en pista" else "Bandera verde, pista libre",
                 textEn = if (flagState == FlagState.YELLOW) "Caution, yellow flag on track" else "Green flag, track clear",
                 timestampMs = now
             )
-        } else current.lastPaAnnouncement
-        if (flagAnn != null && flagAnn.id != lastSpokenPaAnnouncementId && flagState != null) {
-            lastSpokenPaAnnouncementId = flagAnn.id
-            val es = StringsProvider.current(_uiState.value.languageOverride).isSpanish
-            if (!_uiState.value.paAudioMuted) {
-                voiceEngine.speak(if (es) flagAnn.textEs else flagAnn.textEn)
+            gameMode != null -> {
+                val (modeEs, modeEn) = explainGameModeForSpeech(gameMode)
+                PaAnnouncement(
+                    id = "pa_${now}_mode_${gameMode.name}",
+                    textEs = modeEs,
+                    textEn = modeEn,
+                    timestampMs = now
+                )
+            }
+            else -> current.lastPaAnnouncement
+        }
+        if (ann != null && ann.id != lastSpokenPaAnnouncementId && (flagState != null || gameMode != null)) {
+            lastSpokenPaAnnouncementId = ann.id
+            if (!state.isAntennaRoleActive && !state.paAudioMuted && state.antennaVoiceEnabled) {
+                voiceEngine.speak(if (es) ann.textEs else ann.textEn, flush = true)
             }
         }
         val updated = current.copy(
-            circuitId = _uiState.value.activeCircuit.id,
+            circuitId = state.activeCircuit.id,
             gameMode = gameMode ?: current.gameMode,
             heatDurationSec = heatDurationSec ?: current.heatDurationSec,
             antiVibration = antiVibration ?: current.antiVibration,
             flagState = flagState ?: current.flagState,
-            sessionPhase = if (flagState == FlagState.YELLOW) SessionPhase.PAUSED_YELLOW else current.sessionPhase,
-            lastPaAnnouncement = flagAnn,
+            sessionPhase = if (flagState == FlagState.YELLOW) SessionPhase.PAUSED_YELLOW
+            else if (flagState == FlagState.GREEN && current.sessionPhase == SessionPhase.PAUSED_YELLOW) SessionPhase.RACING
+            else current.sessionPhase,
+            lastPaAnnouncement = ann,
             updatedAtMs = now
         )
+        _uiState.update { it.copy(roomState = updated) }
         viewModelScope.launch {
             repo.saveRoom(updated)
             if (antiVibration != null) {
@@ -1681,21 +2096,28 @@ class MxProViewModel(application: Application) : AndroidViewModel(application) {
                     repo.saveAntennaConfig(ant.copy(antiVibration = antiVibration))
                 }
             }
-            syncCircuitData(_uiState.value.activeCircuit.id)
         }
     }
 
     fun startWarmup(friendly: Boolean = false) {
+        val state = _uiState.value
+        val es = StringsProvider.current(state.languageOverride).isSpanish
+        if (state.roomState.sessionPhase != SessionPhase.IDLE) {
+            _uiState.update {
+                it.copy(statusBannerMessage = if (es) "Ya hay una sesión en curso — pulsa STOP primero" else "Session already active — press STOP first")
+            }
+            return
+        }
         val now = syncedNowMs()
         val ann = PaAnnouncement(
             id = "pa_${now}_warmup_start",
-            textEs = "Warm Up iniciado, tres minutos",
-            textEn = "Warm-Up started, three minutes",
+            textEs = "Warm-Up iniciado, tres minutos. Pilotos, pasad varias veces por meta para capturar vuestros colores.",
+            textEn = "Warm-Up started, three minutes. Riders, pass through finish several times to capture your colors.",
             timestampMs = now
         )
         lastSpokenPaAnnouncementId = ann.id
-        val room = _uiState.value.roomState.copy(
-            circuitId = _uiState.value.activeCircuit.id,
+        val room = state.roomState.copy(
+            circuitId = state.activeCircuit.id,
             sessionPhase = SessionPhase.WARMUP,
             flagState = FlagState.GREEN,
             phaseStartTimeMs = now,
@@ -1704,26 +2126,42 @@ class MxProViewModel(application: Application) : AndroidViewModel(application) {
             lastPaAnnouncement = ann,
             updatedAtMs = now
         )
+        _uiState.update {
+            it.copy(
+                roomState = room,
+                statusBannerMessage = if (es) "Warm-Up 3:00 en marcha" else "Warm-Up 3:00 started"
+            )
+        }
+        if (!state.isAntennaRoleActive && !state.paAudioMuted) {
+            voiceEngine.speak(if (es) ann.textEs else ann.textEn, flush = true)
+        }
         viewModelScope.launch {
             repo.saveRoom(room)
-            val es = StringsProvider.current(_uiState.value.languageOverride).isSpanish
-            if (!_uiState.value.paAudioMuted) voiceEngine.speak(if (es) ann.textEs else ann.textEn)
-            syncCircuitData(room.circuitId)
         }
     }
 
     fun start30sCountdown(friendly: Boolean = false) {
+        val state = _uiState.value
+        val es = StringsProvider.current(state.languageOverride).isSpanish
+        if (state.roomState.sessionPhase != SessionPhase.IDLE) {
+            _uiState.update {
+                it.copy(statusBannerMessage = if (es) "Ya hay una sesión en curso — pulsa STOP primero" else "Session already active — press STOP first")
+            }
+            return
+        }
         val now = syncedNowMs()
         val gateAt = now + 30_000L
         val ann = PaAnnouncement(
             id = "pa_${now}_gate30",
-            textEs = "Semáforo treinta segundos",
-            textEn = "Thirty seconds start gate",
+            textEs = "Pilotos a parrilla, treinta segundos para salida",
+            textEn = "Riders to the gate, thirty seconds to start",
             timestampMs = now
         )
         lastSpokenPaAnnouncementId = ann.id
-        val room = _uiState.value.roomState.copy(
-            circuitId = _uiState.value.activeCircuit.id,
+        gateCountdownPhaseStartMs = now
+        lastAnnouncedGateSec = 30
+        val room = state.roomState.copy(
+            circuitId = state.activeCircuit.id,
             sessionPhase = SessionPhase.COUNTDOWN_30,
             flagState = FlagState.GREEN,
             phaseStartTimeMs = now,
@@ -1733,27 +2171,36 @@ class MxProViewModel(application: Application) : AndroidViewModel(application) {
             lastPaAnnouncement = ann,
             updatedAtMs = now
         )
+        _uiState.update { it.copy(roomState = room) }
+        if (!state.isAntennaRoleActive && !state.paAudioMuted) {
+            voiceEngine.speak(if (es) ann.textEs else ann.textEn, flush = true)
+        }
         viewModelScope.launch {
             repo.saveRoom(room)
-            val es = StringsProvider.current(_uiState.value.languageOverride).isSpanish
-            if (!_uiState.value.paAudioMuted) voiceEngine.speak(if (es) ann.textEs else ann.textEn)
-            syncCircuitData(room.circuitId)
         }
     }
 
     fun startRandomMxGate(friendly: Boolean = false) {
+        val state = _uiState.value
+        val es = StringsProvider.current(state.languageOverride).isSpanish
+        if (state.roomState.sessionPhase != SessionPhase.IDLE) {
+            _uiState.update {
+                it.copy(statusBannerMessage = if (es) "Ya hay una sesión en curso — pulsa STOP primero" else "Session already active — press STOP first")
+            }
+            return
+        }
         val now = syncedNowMs()
         val randomDelayMs = (4000L..11000L).random()
         val gateAt = now + randomDelayMs
         val readyAnn = PaAnnouncement(
             id = "pa_${now}_mxgate",
-            textEs = "Pilotos en valla, atentos a la caída",
+            textEs = "Pilotos a parrilla, atentos a la caída de valla",
             textEn = "Riders on the gate, watch the drop",
             timestampMs = now
         )
         lastSpokenPaAnnouncementId = readyAnn.id
-        val room = _uiState.value.roomState.copy(
-            circuitId = _uiState.value.activeCircuit.id,
+        val room = state.roomState.copy(
+            circuitId = state.activeCircuit.id,
             sessionPhase = SessionPhase.RANDOM_GATE,
             flagState = FlagState.GREEN,
             phaseStartTimeMs = now,
@@ -1763,70 +2210,90 @@ class MxProViewModel(application: Application) : AndroidViewModel(application) {
             lastPaAnnouncement = readyAnn,
             updatedAtMs = now
         )
+        _uiState.update { it.copy(roomState = room) }
+        if (!state.isAntennaRoleActive && !state.paAudioMuted) {
+            voiceEngine.speak(if (es) readyAnn.textEs else readyAnn.textEn, flush = true)
+        }
         viewModelScope.launch {
             repo.saveRoom(room)
-            val es = StringsProvider.current(_uiState.value.languageOverride).isSpanish
-            if (!_uiState.value.paAudioMuted) voiceEngine.speak(if (es) readyAnn.textEs else readyAnn.textEn)
-            syncCircuitData(room.circuitId)
             delay(randomDelayMs)
+            // Abort if Director or Rider hit STOP before gate dropped
+            val latestRoom = _uiState.value.roomState
+            if (latestRoom.sessionPhase != SessionPhase.RANDOM_GATE || latestRoom.phaseStartTimeMs != now) {
+                return@launch
+            }
             val dropNow = syncedNowMs()
             val dropAnn = PaAnnouncement(
                 id = "pa_${dropNow}_mxgatedrop",
-                textEs = "¡Valla abajo! ¡Gas!",
-                textEn = "Gate drop! Go!",
+                textEs = "¡Salida! ¡Valla abajo, gas!",
+                textEn = "Start! Gate drop, go!",
                 timestampMs = dropNow
             )
             lastSpokenPaAnnouncementId = dropAnn.id
-            voiceEngine.playBeep(ToneGenerator.TONE_CDMA_EMERGENCY_RINGBACK, 450)
-            if (!_uiState.value.paAudioMuted) voiceEngine.speak(if (es) dropAnn.textEs else dropAnn.textEn)
-            repo.saveRoom(
-                room.copy(
-                    sessionPhase = SessionPhase.RACING,
-                    phaseStartTimeMs = gateAt,
-                    phaseEndTimeMs = gateAt + room.heatDurationSec * 1000L,
-                    lastPaAnnouncement = dropAnn,
-                    updatedAtMs = dropNow
-                )
+            val startedRace = latestRoom.copy(
+                sessionPhase = SessionPhase.RACING,
+                flagState = FlagState.GREEN,
+                phaseStartTimeMs = dropNow,
+                phaseEndTimeMs = dropNow + latestRoom.heatDurationSec * 1000L,
+                gateDropTimeMs = dropNow,
+                lastPaAnnouncement = dropAnn,
+                updatedAtMs = dropNow
             )
-            syncCircuitData(room.circuitId)
+            _uiState.update { it.copy(roomState = startedRace) }
+            voiceEngine.playBeep(ToneGenerator.TONE_CDMA_EMERGENCY_RINGBACK, 450)
+            if (!_uiState.value.isAntennaRoleActive && !_uiState.value.paAudioMuted) {
+                voiceEngine.speak(if (es) dropAnn.textEs else dropAnn.textEn, flush = true)
+            }
+            repo.saveRoom(startedRace)
         }
     }
 
-    fun stopSession() {
-        val room = _uiState.value.roomState
+    fun stopSession(isDirector: Boolean = true) {
+        val state = _uiState.value
+        val room = state.roomState
+        if (room.sessionPhase == SessionPhase.IDLE) return
+        val es = StringsProvider.current(state.languageOverride).isSpanish
+        if (!isDirector && !room.friendlyModeActive) {
+            _uiState.update {
+                it.copy(statusBannerMessage = if (es) "Solo Dirección puede detener esta manga" else "Only Director can stop this session")
+            }
+            return
+        }
         val wasWarmup = room.sessionPhase == SessionPhase.WARMUP
         val now = syncedNowMs()
         val ann = PaAnnouncement(
             id = "pa_${now}_stop",
-            textEs = if (wasWarmup) "Final de warm-up, pilotos a parrilla" else "Sesión detenida por Dirección",
-            textEn = if (wasWarmup) "End of warm-up, riders to the grid" else "Session stopped by Director",
+            textEs = if (wasWarmup) "Warm-Up detenido, pilotos a parrilla" else "Sesión detenida",
+            textEn = if (wasWarmup) "Warm-Up stopped, riders to the grid" else "Session stopped",
             timestampMs = now
         )
         lastSpokenPaAnnouncementId = ann.id
+        lastAutoEndedPhaseStartMs = room.phaseStartTimeMs
         val stopped = room.copy(
-            circuitId = _uiState.value.activeCircuit.id,
+            circuitId = state.activeCircuit.id,
             sessionPhase = SessionPhase.IDLE,
             flagState = FlagState.GREEN,
             phaseEndTimeMs = 0L,
+            friendlyModeActive = false,
             lastPaAnnouncement = ann,
             updatedAtMs = now
         )
-        val es = StringsProvider.current(_uiState.value.languageOverride).isSpanish
+        _uiState.update {
+            it.copy(
+                roomState = stopped,
+                statusBannerMessage = if (wasWarmup) {
+                    if (es) "Warm-Up detenido — Pilotos a parrilla" else "Warm-Up stopped — Riders to the grid"
+                } else {
+                    if (es) "Sesión detenida" else "Session stopped"
+                }
+            )
+        }
+        voiceEngine.playBeep(ToneGenerator.TONE_PROP_BEEP2, 300)
+        if (!state.isAntennaRoleActive && !state.paAudioMuted) {
+            voiceEngine.speak(if (es) ann.textEs else ann.textEn, flush = true)
+        }
         viewModelScope.launch {
             repo.saveRoom(stopped)
-            voiceEngine.playBeep(ToneGenerator.TONE_PROP_BEEP2, 300)
-            if (!_uiState.value.paAudioMuted) voiceEngine.speak(if (es) ann.textEs else ann.textEn)
-            _uiState.update {
-                it.copy(
-                    roomState = stopped,
-                    statusBannerMessage = if (wasWarmup) {
-                        if (es) "Final de warm-up, pilotos a parrilla" else "End of warm-up, riders to the grid"
-                    } else {
-                        if (es) "Sesión detenida" else "Session stopped"
-                    }
-                )
-            }
-            syncCircuitData(stopped.circuitId)
         }
     }
 
@@ -1869,6 +2336,9 @@ class MxProViewModel(application: Application) : AndroidViewModel(application) {
         roiHeight: RoiHeight? = null,
         lineOrientation: LineOrientation? = null,
         linePosition: Float? = null,
+        colorZoneX: Float? = null,
+        colorZoneY: Float? = null,
+        singleTargetColorName: String? = null,
         directionFilter: PassingDirection? = null,
         aiStewardEnabled: Boolean? = null,
         antiVibration: AntiVibrationLevel? = null
@@ -1881,6 +2351,9 @@ class MxProViewModel(application: Application) : AndroidViewModel(application) {
             roiHeight = roiHeight ?: current.roiHeight,
             lineOrientation = lineOrientation ?: current.lineOrientation,
             linePosition = linePosition ?: current.linePosition,
+            colorZoneX = colorZoneX ?: current.colorZoneX,
+            colorZoneY = colorZoneY ?: current.colorZoneY,
+            singleTargetColorName = singleTargetColorName ?: current.singleTargetColorName,
             directionFilter = directionFilter ?: current.directionFilter,
             aiStewardEnabled = aiStewardEnabled ?: current.aiStewardEnabled,
             antiVibration = antiVibration ?: current.antiVibration
@@ -1898,6 +2371,9 @@ class MxProViewModel(application: Application) : AndroidViewModel(application) {
                 if (roiHeight != null) put("roiHeight", roiHeight.name)
                 if (lineOrientation != null) put("lineOrientation", lineOrientation.name)
                 if (linePosition != null) put("linePosition", linePosition.toDouble())
+                if (colorZoneX != null) put("colorZoneX", colorZoneX.toDouble())
+                if (colorZoneY != null) put("colorZoneY", colorZoneY.toDouble())
+                if (singleTargetColorName != null) put("singleTargetColorName", singleTargetColorName)
                 if (directionFilter != null) put("directionFilter", directionFilter.name)
                 if (aiStewardEnabled != null) put("aiStewardEnabled", aiStewardEnabled)
                 if (antiVibration != null) put("antiVibration", antiVibration.name)
@@ -2357,6 +2833,7 @@ class MxProViewModel(application: Application) : AndroidViewModel(application) {
 
     override fun onCleared() {
         super.onCleared()
+        lanBridge.stopDirectorServer()
         PocketAudioService.stop(getApplication())
         voiceEngine.release()
     }

@@ -295,7 +295,10 @@ data class AntennaConfig(
     val roiSize: RoiSize = RoiSize.M,
     val roiHeight: RoiHeight = RoiHeight.MEDIUM,
     val lineOrientation: LineOrientation = LineOrientation.VERTICAL,
-    val linePosition: Float = 0.5f,
+    val linePosition: Float = 0.42f,
+    val colorZoneX: Float = 0.70f,
+    val colorZoneY: Float = 0.50f,
+    val singleTargetColorName: String = "",
     val directionFilter: PassingDirection = PassingDirection.ANY,
     val aiStewardEnabled: Boolean = true,
     val antiVibration: AntiVibrationLevel = AntiVibrationLevel.MEDIUM,
@@ -320,6 +323,21 @@ data class LabSample(
     val b: Double = 0.0,
     val hex: String = "#FFFFFF",
     val colorName: String = "Blanco"
+)
+
+fun predefinedMotoColors(isSpanish: Boolean = true): List<LabSample> = listOf(
+    LabSample(l = 53.2, a = 80.1, b = 67.2, hex = "#E53935", colorName = if (isSpanish) "Rojo" else "Red"),
+    LabSample(l = 48.0, a = 24.0, b = -62.0, hex = "#1E88E5", colorName = if (isSpanish) "Azul" else "Blue"),
+    LabSample(l = 48.5, a = -46.0, b = 36.0, hex = "#2E7D32", colorName = if (isSpanish) "Verde" else "Green"),
+    LabSample(l = 87.7, a = -79.2, b = 80.9, hex = "#76FF03", colorName = if (isSpanish) "Verde Flúor" else "Neon Green"),
+    LabSample(l = 86.0, a = -6.0, b = 82.0, hex = "#FDD835", colorName = if (isSpanish) "Amarillo" else "Yellow"),
+    LabSample(l = 67.0, a = 42.0, b = 72.0, hex = "#FB8C00", colorName = if (isSpanish) "Naranja" else "Orange"),
+    LabSample(l = 59.0, a = 63.0, b = -6.0, hex = "#EC407A", colorName = if (isSpanish) "Rosa" else "Pink"),
+    LabSample(l = 39.0, a = 54.0, b = -46.0, hex = "#8E24AA", colorName = if (isSpanish) "Morado" else "Purple"),
+    LabSample(l = 64.0, a = -36.0, b = -22.0, hex = "#00ACC1", colorName = if (isSpanish) "Cian" else "Cyan"),
+    LabSample(l = 96.0, a = 0.0, b = 0.0, hex = "#F8FAFC", colorName = if (isSpanish) "Blanco" else "White"),
+    LabSample(l = 12.0, a = 0.0, b = 0.0, hex = "#18181B", colorName = if (isSpanish) "Negro" else "Black"),
+    LabSample(l = 62.0, a = 0.0, b = 0.0, hex = "#94A3B8", colorName = if (isSpanish) "Gris" else "Gray")
 )
 
 @JsonClass(generateAdapter = true)
@@ -391,7 +409,7 @@ object MxConstants {
      * (no visible ni modificable desde la app ni desde Dirección).
      */
     const val OFFICIAL_CLUB_EMAIL = "circuito@metropolitanomx.es"
-    const val DEFAULT_APK_URL = "https://github.com/METROPOLITANOMX/metropolitano-mx-2.0/releases/latest"
+    const val DEFAULT_APK_URL = "https://metropolitanomx.github.io/metropolitano-mx-2.0/"
 }
 
 @JsonClass(generateAdapter = true)

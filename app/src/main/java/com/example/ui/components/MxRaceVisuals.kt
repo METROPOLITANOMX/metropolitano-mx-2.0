@@ -12,6 +12,7 @@ import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -60,28 +61,216 @@ fun FlagAndRecordFrameOverlay(
     flagState: FlagState,
     lastHotlapAtMs: Long,
     nowMs: Long,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    sessionPhase: SessionPhase = SessionPhase.IDLE,
+    phaseStartTimeMs: Long = 0L,
+    isSpanish: Boolean = true
 ) {
     val mx = LocalMxColors.current
     val isRecentHotlap = lastHotlapAtMs > 0L && (nowMs - lastHotlapAtMs) in 0L..4200L
     val isYellow = flagState == FlagState.YELLOW
-    if (!isYellow && !isRecentHotlap) return
+    val isGreenRacing = flagState == FlagState.GREEN && sessionPhase == SessionPhase.RACING
+    val isRecentGreen = isGreenRacing && (nowMs - phaseStartTimeMs) in 0L..4000L
+    if (!isYellow && !isRecentHotlap && !isGreenRacing) return
 
     val infinite = rememberInfiniteTransition(label = "edge_glow")
     val pulseColor by infinite.animateColor(
-        initialValue = if (isYellow) mx.goldBright.copy(alpha = 0.85f) else mx.hotlapPurple.copy(alpha = 0.9f),
-        targetValue = if (isYellow) mx.mxBadge.copy(alpha = 0.25f) else mx.goldAccent.copy(alpha = 0.25f),
+        initialValue = when {
+            isYellow -> Color(0xFFFFD60A).copy(alpha = 0.95f)
+            isRecentHotlap -> mx.hotlapPurple.copy(alpha = 0.95f)
+            else -> Color(0xFF22C55E).copy(alpha = if (isRecentGreen) 0.95f else 0.70f)
+        },
+        targetValue = when {
+            isYellow -> Color(0xFFF59E0B).copy(alpha = 0.30f)
+            isRecentHotlap -> mx.goldAccent.copy(alpha = 0.30f)
+            else -> Color(0xFF10B981).copy(alpha = if (isRecentGreen) 0.40f else 0.25f)
+        },
         animationSpec = infiniteRepeatable(
-            animation = tween(520, easing = FastOutSlowInEasing),
+            animation = tween(if (isYellow) 420 else 650, easing = FastOutSlowInEasing),
             repeatMode = RepeatMode.Reverse
         ),
         label = "pulse_edge"
     )
+
+    val borderStrokeDp = when {
+        isYellow -> 8.dp
+        isRecentHotlap -> 7.dp
+        isRecentGreen -> 8.dp
+        else -> 5.dp
+    }
+
+    Box(modifier = modifier.fillMaxSize()) {
+        // Soft illuminated inward glow + crisp perimeter flag border
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .border(width = borderStrokeDp, color = pulseColor, shape = RoundedCornerShape(0.dp))
+                .border(
+                    width = borderStrokeDp * 2.4f,
+                    color = pulseColor.copy(alpha = pulseColor.alpha * 0.28f),
+                    shape = RoundedCornerShape(0.dp)
+                )
+        )
+        if (isYellow || isRecentGreen) {
+            val bannerBg = if (isYellow) Color(0xFFEAB308) else Color(0xFF16A34A)
+            val bannerFg = if (isYellow) Color(0xFF111827) else Color.White
+            val label = when {
+                isYellow -> if (isSpanish) "⚑ BANDERA AMARILLA • PRECAUCIÓN" else "⚑ YELLOW FLAG • CAUTION"
+                else -> if (isSpanish) "⚑ BANDERA VERDE • ¡GAS!" else "⚑ GREEN FLAG • GO!"
+            }
+            Box(
+                modifier = Modifier
+                    .align(Alignment.TopCenter)
+                    .padding(top = 8.dp)
+                    .clip(RoundedCornerShape(999.dp))
+                    .background(bannerBg.copy(alpha = 0.94f))
+                    .border(1.5.dp, Color.White.copy(alpha = 0.7f), RoundedCornerShape(999.dp))
+                    .padding(horizontal = 14.dp, vertical = 5.dp)
+            ) {
+                Text(
+                    text = label,
+                    style = MaterialTheme.typography.labelLarge,
+                    color = bannerFg,
+                    fontWeight = FontWeight.ExtraBold
+                )
+            }
+        }
+    }
+}
+
+@Composable
+fun PilotStartGateIlluminationOverlay(
+    sessionPhase: SessionPhase,
+    phaseEndTimeMs: Long,
+    phaseStartTimeMs: Long,
+    nowMs: Long,
+    isSpanish: Boolean,
+    dismissedGreenForStartMs: Long,
+    onDismissGreen: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    val isRecentGreen = sessionPhase == SessionPhase.RACING &&
+        (nowMs - phaseStartTimeMs) in 0L..3500L &&
+        dismissedGreenForStartMs != phaseStartTimeMs
+    val isActive = sessionPhase == SessionPhase.COUNTDOWN_30 ||
+        sessionPhase == SessionPhase.RANDOM_GATE ||
+        isRecentGreen
+    if (!isActive) return
+
+    val remSec = if (phaseEndTimeMs > nowMs) {
+        ((phaseEndTimeMs - nowMs + 200L) / 1000L).toInt().coerceAtLeast(0)
+    } else 0
+    val isAmberStage = sessionPhase == SessionPhase.COUNTDOWN_30 && remSec > 20
+    val isDropped = sessionPhase == SessionPhase.RACING
+
+    val litCount = when {
+        isDropped -> 5
+        sessionPhase == SessionPhase.RANDOM_GATE -> 5
+        remSec <= 1 -> 5
+        remSec <= 3 -> 4
+        remSec <= 6 -> 3
+        remSec <= 10 -> 2
+        remSec <= 20 -> 1
+        else -> 0
+    }
+
+    val infinite = rememberInfiniteTransition(label = "start_gate_illumination")
+    val pulse by infinite.animateColor(
+        initialValue = when {
+            isDropped -> Color(0xFF22C55E)
+            isAmberStage -> Color(0xFFF59E0B)
+            else -> Color(0xFFEF4444)
+        },
+        targetValue = when {
+            isDropped -> Color(0xFF10B981)
+            isAmberStage -> Color(0xFFD97706)
+            else -> Color(0xFFB91C1C)
+        },
+        animationSpec = infiniteRepeatable(
+            animation = tween(380, easing = FastOutSlowInEasing),
+            repeatMode = RepeatMode.Reverse
+        ),
+        label = "gate_illum_color"
+    )
+
+    val screenBg = when {
+        isDropped -> Brush.radialGradient(
+            listOf(Color(0xFF16A34A).copy(alpha = 0.94f), Color(0xFF052E16).copy(alpha = 0.97f))
+        )
+        isAmberStage -> Brush.radialGradient(
+            listOf(Color(0xFFF59E0B).copy(alpha = 0.88f), Color(0xFF451A03).copy(alpha = 0.96f))
+        )
+        else -> Brush.radialGradient(
+            listOf(Color(0xFFDC2626).copy(alpha = 0.90f), Color(0xFF450A0A).copy(alpha = 0.97f))
+        )
+    }
+
     Box(
         modifier = modifier
             .fillMaxSize()
-            .border(width = 4.dp, color = pulseColor, shape = RoundedCornerShape(0.dp))
-    )
+            .background(screenBg)
+            .border(10.dp, pulse)
+            .then(
+                if (isDropped) {
+                    Modifier.clickable { onDismissGreen() }
+                } else {
+                    Modifier
+                }
+            )
+            .padding(24.dp),
+        contentAlignment = Alignment.Center
+    ) {
+        Column(
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(20.dp)
+        ) {
+            Text(
+                text = when {
+                    isDropped -> if (isSpanish) "¡SALIDA! ¡GAS!" else "START! GO!"
+                    sessionPhase == SessionPhase.RANDOM_GATE -> if (isSpanish) "ATENTOS A LA VALLA" else "WATCH THE GATE"
+                    isAmberStage -> if (isSpanish) "PILOTOS A PARRILLA" else "RIDERS TO THE GATE"
+                    else -> if (isSpanish) "SEMÁFORO DE SALIDA" else "START LIGHTS"
+                },
+                style = MaterialTheme.typography.headlineMedium,
+                color = Color.White,
+                fontWeight = FontWeight.ExtraBold
+            )
+
+            Row(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
+                for (i in 1..5) {
+                    val lit = i <= litCount
+                    val ledColor = when {
+                        isDropped -> Color(0xFF4ADE80)
+                        isAmberStage -> Color(0xFFFBBF24)
+                        lit -> Color(0xFFFF2E3B)
+                        else -> Color(0xFF27272A)
+                    }
+                    Box(
+                        modifier = Modifier
+                            .size(46.dp)
+                            .clip(CircleShape)
+                            .background(ledColor)
+                            .border(3.dp, Color.White.copy(alpha = if (lit || isAmberStage) 0.9f else 0.25f), CircleShape)
+                    )
+                }
+            }
+
+            if (sessionPhase == SessionPhase.COUNTDOWN_30) {
+                Text(
+                    text = "${remSec}s",
+                    style = MaterialTheme.typography.displayLarge.copy(fontSize = 86.sp, lineHeight = 90.sp),
+                    color = Color.White,
+                    fontWeight = FontWeight.Black
+                )
+            } else if (isDropped) {
+                Text(
+                    text = if (isSpanish) "Toca para continuar al crono" else "Tap to continue to timer",
+                    style = MaterialTheme.typography.labelLarge,
+                    color = Color.White.copy(alpha = 0.85f)
+                )
+            }
+        }
+    }
 }
 
 @Composable
