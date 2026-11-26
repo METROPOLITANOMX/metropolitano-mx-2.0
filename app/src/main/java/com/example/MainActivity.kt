@@ -86,7 +86,8 @@ class MainActivity : ComponentActivity() {
                                 state = state,
                                 strings = strings,
                                 viewModel = vm,
-                                onBack = { navController.popBackStack() }
+                                onBack = { navController.popBackStack() },
+                                onNavigatePilot = { navController.navigate(MxRoutes.PILOT) }
                             )
                         }
                         composable(MxRoutes.LIVE_FAN) {

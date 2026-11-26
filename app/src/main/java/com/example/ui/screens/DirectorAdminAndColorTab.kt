@@ -19,9 +19,14 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Block
 import androidx.compose.material.icons.filled.CheckCircle
+import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Key
+import androidx.compose.material.icons.filled.Lock
+import androidx.compose.material.icons.filled.Mail
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material3.AlertDialog
@@ -29,6 +34,7 @@ import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -42,8 +48,11 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import com.example.data.model.AntennaStation
 import com.example.data.model.DetectionMode
@@ -58,6 +67,7 @@ import com.example.ui.theme.LocalMxColors
 import com.example.ui.theme.contrastTextOn
 import com.example.ui.theme.mxChipColors
 import com.example.ui.theme.mxSwitchColors
+import com.example.ui.theme.mxTextFieldColors
 import com.example.ui.viewmodel.MxProViewModel
 import com.example.ui.viewmodel.MxUiState
 
@@ -407,7 +417,13 @@ fun DirectorClubAdminTab(
     viewModel: MxProViewModel
 ) {
     val mx = LocalMxColors.current
+    val clipboard = LocalClipboardManager.current
     var pendingDeleteRider by remember { mutableStateOf<RiderAccount?>(null) }
+    var newDirPass by remember { mutableStateOf("") }
+    var customCode by remember { mutableStateOf("") }
+    var codeCircuit by remember { mutableStateOf("") }
+    var codeNote by remember { mutableStateOf("") }
+    var codePromoteOfficial by remember { mutableStateOf(true) }
 
     Column(
         modifier = Modifier
@@ -416,6 +432,7 @@ fun DirectorClubAdminTab(
             .padding(16.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
+        // 1. Registrations toggle
         GlassRaceCard {
             Row(
                 modifier = Modifier.fillMaxWidth().padding(14.dp),
@@ -443,6 +460,196 @@ fun DirectorClubAdminTab(
             }
         }
 
+        // 2. APK Download & Install Lock + Custom Code Generator
+        GlassRaceCard(accentBorder = if (state.globalConfig.apkDownloadLocked) mx.racingRed else mx.goldAccent.copy(alpha = 0.55f)) {
+            Column(modifier = Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Icon(Icons.Default.Lock, contentDescription = null, tint = if (state.globalConfig.apkDownloadLocked) mx.racingRed else mx.telemetryGreen, modifier = Modifier.size(18.dp))
+                            Spacer(Modifier.width(6.dp))
+                            Text(
+                                if (strings.isSpanish) "Bloquear Descarga e Instalación APK sin Código" else "Lock APK Download & Install Without Code",
+                                style = MaterialTheme.typography.titleMedium,
+                                color = MaterialTheme.colorScheme.onSurface
+                            )
+                        }
+                        Text(
+                            if (state.globalConfig.apkDownloadLocked) {
+                                if (strings.isSpanish) "Bloqueado: exige código emitido por Dirección"
+                                else "Locked: requires code issued by Director"
+                            } else {
+                                if (strings.isSpanish) "Abierto al público general"
+                                else "Open to public"
+                            },
+                            style = MaterialTheme.typography.labelSmall,
+                            color = if (state.globalConfig.apkDownloadLocked) mx.racingRed else mx.telemetryGreen
+                        )
+                    }
+                    Switch(
+                        checked = state.globalConfig.apkDownloadLocked,
+                        onCheckedChange = { viewModel.toggleApkDownloadLocked() },
+                        colors = mxSwitchColors(),
+                        modifier = Modifier.testTag("admin_apk_lock_switch")
+                    )
+                }
+
+                Text(
+                    if (strings.isSpanish) "Emitir Código Personalizado (Descarga / Instalación / Circuito Oficial)"
+                    else "Issue Custom Code (Download / Install / Official Circuit)",
+                    style = MaterialTheme.typography.labelLarge,
+                    color = mx.goldAccent
+                )
+                OutlinedTextField(
+                    value = customCode,
+                    onValueChange = { customCode = it.uppercase() },
+                    label = { Text(if (strings.isSpanish) "Código (vacío = aleatorio)" else "Custom code (blank = random)") },
+                    singleLine = true,
+                    colors = mxTextFieldColors(),
+                    modifier = Modifier.fillMaxWidth().testTag("admin_custom_code_input")
+                )
+                OutlinedTextField(
+                    value = codeCircuit,
+                    onValueChange = { codeCircuit = it },
+                    label = { Text(if (strings.isSpanish) "Nombre del Circuito" else "Circuit Name") },
+                    singleLine = true,
+                    colors = mxTextFieldColors(),
+                    modifier = Modifier.fillMaxWidth().testTag("admin_code_circuit_input")
+                )
+                OutlinedTextField(
+                    value = codeNote,
+                    onValueChange = { codeNote = it },
+                    label = { Text(if (strings.isSpanish) "Ciudad / Nota (opcional)" else "City / Note (optional)") },
+                    singleLine = true,
+                    colors = mxTextFieldColors(),
+                    modifier = Modifier.fillMaxWidth()
+                )
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        if (strings.isSpanish) "Convertir en Circuito Oficial al canjear"
+                        else "Promote to Official Circuit on redeem",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurface,
+                        modifier = Modifier.weight(1f)
+                    )
+                    Switch(
+                        checked = codePromoteOfficial,
+                        onCheckedChange = { codePromoteOfficial = it },
+                        colors = mxSwitchColors()
+                    )
+                }
+                Mx3dButton(
+                    onClick = {
+                        viewModel.createInviteDownloadCode(
+                            rawCode = customCode,
+                            circuitName = codeCircuit,
+                            note = codeNote,
+                            promoteOfficial = codePromoteOfficial
+                        )
+                        customCode = ""
+                        codeNote = ""
+                    },
+                    containerColor = mx.goldAccent,
+                    contentColor = contrastTextOn(mx.goldAccent),
+                    modifier = Modifier.fillMaxWidth().testTag("admin_issue_code_button")
+                ) {
+                    Icon(Icons.Default.Add, contentDescription = null)
+                    Spacer(Modifier.width(6.dp))
+                    Text(if (strings.isSpanish) "Emitir Código" else "Issue Code")
+                }
+
+                val codesList = state.globalConfig.accessCodes.values.sortedByDescending { it.createdAtMs }
+                if (codesList.isNotEmpty()) {
+                    Text(
+                        "${if (strings.isSpanish) "Códigos Emitidos" else "Issued Codes"} (${codesList.size})",
+                        style = MaterialTheme.typography.labelLarge,
+                        color = mx.goldBright
+                    )
+                    codesList.forEach { entry ->
+                        GlassRaceCard {
+                            Row(
+                                modifier = Modifier.fillMaxWidth().padding(10.dp),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text(
+                                        "${entry.code} • ${if (entry.active) "ACTIVO" else "ANULADO"}",
+                                        style = MaterialTheme.typography.titleMedium,
+                                        color = if (entry.active) mx.telemetryGreen else mx.racingRed
+                                    )
+                                    Text(
+                                        "${entry.circuitName}${if (entry.promoteOfficial) " ★ Oficial" else ""} • Usos: ${entry.redeemedCount}",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = mx.subtleText
+                                    )
+                                }
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    IconButton(onClick = { clipboard.setText(AnnotatedString(entry.code)) }) {
+                                        Icon(Icons.Default.ContentCopy, contentDescription = "Copy", tint = mx.goldAccent)
+                                    }
+                                    IconButton(onClick = { viewModel.toggleInviteCodeActive(entry.code) }) {
+                                        Icon(
+                                            Icons.Default.Block,
+                                            contentDescription = "Toggle",
+                                            tint = if (entry.active) mx.goldAccent else mx.telemetryGreen
+                                        )
+                                    }
+                                    IconButton(onClick = { viewModel.deleteInviteCode(entry.code) }) {
+                                        Icon(Icons.Default.Delete, contentDescription = "Delete", tint = mx.racingRed)
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // 3. Change Director Access Password
+        GlassRaceCard {
+            Column(modifier = Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(Icons.Default.Key, contentDescription = null, tint = mx.goldAccent)
+                    Spacer(Modifier.width(6.dp))
+                    Text(
+                        if (strings.isSpanish) "Cambiar Clave de Dirección" else "Change Director Password",
+                        style = MaterialTheme.typography.titleMedium,
+                        color = mx.goldAccent
+                    )
+                }
+                OutlinedTextField(
+                    value = newDirPass,
+                    onValueChange = { newDirPass = it },
+                    label = { Text(if (strings.isSpanish) "Nueva contraseña (mín. 4 caracteres)" else "New password (min 4 chars)") },
+                    visualTransformation = PasswordVisualTransformation(),
+                    singleLine = true,
+                    colors = mxTextFieldColors(),
+                    modifier = Modifier.fillMaxWidth().testTag("admin_change_dir_pwd_input")
+                )
+                Mx3dButton(
+                    onClick = {
+                        viewModel.changeDirectorPassword(newDirPass)
+                        newDirPass = ""
+                    },
+                    containerColor = mx.smBadge,
+                    contentColor = contrastTextOn(mx.smBadge),
+                    modifier = Modifier.fillMaxWidth().testTag("admin_save_dir_pwd_btn")
+                ) {
+                    Text(if (strings.isSpanish) "Guardar Nueva Clave de Dirección" else "Save New Director Password")
+                }
+            }
+        }
+
+        // 4. Visits counter
         GlassRaceCard {
             Column(modifier = Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                 Row(
@@ -477,6 +684,7 @@ fun DirectorClubAdminTab(
             }
         }
 
+        // 5. Rider accounts
         Text(
             if (strings.isSpanish) "Cuentas de Pilotos (${state.riders.size})" else "Rider Accounts (${state.riders.size})",
             style = MaterialTheme.typography.titleLarge,
@@ -536,16 +744,52 @@ fun DirectorClubAdminTab(
             }
         }
 
-        Text(
-            if (strings.isSpanish) "Buzón de Reportes (${state.reports.size})" else "Report Inbox (${state.reports.size})",
-            style = MaterialTheme.typography.titleLarge,
-            color = MaterialTheme.colorScheme.onBackground
-        )
+        // 6. Buzón Inbox (immutable club backend route; no email UI field)
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Icon(Icons.Default.Mail, contentDescription = null, tint = mx.goldAccent)
+            Spacer(Modifier.width(6.dp))
+            Text(
+                if (strings.isSpanish) "Buzón y Solicitudes de Circuito Oficial (${state.reports.size})"
+                else "Inbox & Official Circuit Requests (${state.reports.size})",
+                style = MaterialTheme.typography.titleLarge,
+                color = MaterialTheme.colorScheme.onBackground
+            )
+        }
         state.reports.forEach { rep ->
-            GlassRaceCard {
-                Column(modifier = Modifier.padding(12.dp)) {
-                    Text("[${rep.type}] ${rep.senderName}", style = MaterialTheme.typography.titleMedium, color = mx.goldAccent)
+            val isOfficialReq = rep.type == "OFFICIAL_REQUEST"
+            GlassRaceCard(accentBorder = if (isOfficialReq) mx.goldAccent.copy(alpha = 0.65f) else null) {
+                Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Text(
+                        text = "[${if (isOfficialReq) "SOLICITUD OFICIAL" else rep.type}] ${rep.senderName}",
+                        style = MaterialTheme.typography.titleMedium,
+                        color = mx.goldAccent
+                    )
+                    if (rep.circuitRequested.isNotBlank()) {
+                        Text(
+                            text = "${if (strings.isSpanish) "Circuito solicitado" else "Requested circuit"}: ${rep.circuitRequested}",
+                            style = MaterialTheme.typography.labelMedium,
+                            color = mx.telemetryGreen
+                        )
+                    }
                     Text(rep.message, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurface)
+                    if (isOfficialReq) {
+                        Mx3dOutlinedButton(
+                            onClick = {
+                                codeCircuit = rep.circuitRequested.ifBlank { rep.senderName }
+                                codePromoteOfficial = true
+                                viewModel.createInviteDownloadCode(
+                                    rawCode = "",
+                                    circuitName = codeCircuit,
+                                    note = rep.senderName,
+                                    promoteOfficial = true
+                                )
+                            },
+                            borderColor = mx.telemetryGreen,
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Text(if (strings.isSpanish) "Emitir Código Oficial Ahora" else "Issue Official Code Now")
+                        }
+                    }
                 }
             }
         }

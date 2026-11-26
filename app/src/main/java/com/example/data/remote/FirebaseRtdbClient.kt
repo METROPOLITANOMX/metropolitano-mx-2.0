@@ -72,6 +72,10 @@ class FirebaseRtdbClient {
     var isOnline: Boolean = true
         private set
 
+    @Volatile
+    var lastNetworkError: String? = null
+        private set
+
     fun syncedNowMs(): Long = System.currentTimeMillis() + serverTimeOffsetMs
 
     suspend fun syncServerTimeOffset(deviceId: String): Long = withContext(Dispatchers.IO) {
@@ -103,9 +107,12 @@ class FirebaseRtdbClient {
                                 bestOffset = offset
                             }
                         }
+                    } else if (!resp.isSuccessful) {
+                        lastNetworkError = "HTTP ${resp.code}"
                     }
                 }
             } catch (e: Exception) {
+                lastNetworkError = e.message
                 Log.w(TAG, "Clock sync probe failed: ${e.message}")
             }
         }
@@ -114,6 +121,7 @@ class FirebaseRtdbClient {
             serverTimeOffsetMs = bestOffset
             lastSyncRttMs = bestRtt
             isOnline = true
+            lastNetworkError = null
         } else {
             isOnline = false
         }
@@ -163,6 +171,7 @@ class FirebaseRtdbClient {
                 val raw = resp.body?.string()
                 isOnline = resp.isSuccessful
                 if (!resp.isSuccessful || raw.isNullOrBlank() || raw == "null") {
+                    if (!resp.isSuccessful) lastNetworkError = "GET $path HTTP ${resp.code}"
                     return@withContext null
                 }
                 try {
@@ -175,14 +184,11 @@ class FirebaseRtdbClient {
         } catch (e: Exception) {
             Log.w(TAG, "Network GET failed at $path: ${e.message}")
             isOnline = false
+            lastNetworkError = e.message
             null
         }
     }
 
-    /**
-     * Entry-by-entry fault-tolerant map reader: if any legacy/partial record in Firebase RTDB
-     * fails Moshi validation, only that bad entry is skipped instead of discarding the entire list.
-     */
     private suspend inline fun <reified T> getMap(path: String): Map<String, T> = withContext(Dispatchers.IO) {
         try {
             val req = Request.Builder().url("$BASE_URL/$path.json").get().build()
@@ -234,6 +240,7 @@ class FirebaseRtdbClient {
         } catch (e: Exception) {
             Log.w(TAG, "Network GET map failed at $path: ${e.message}")
             isOnline = false
+            lastNetworkError = e.message
             emptyMap()
         }
     }
@@ -248,13 +255,17 @@ class FirebaseRtdbClient {
             http.newCall(req).execute().use { resp ->
                 isOnline = resp.isSuccessful
                 if (!resp.isSuccessful) {
+                    lastNetworkError = "PUT $path HTTP ${resp.code}"
                     Log.w(TAG, "PUT failed $path code=${resp.code}")
+                } else {
+                    lastNetworkError = null
                 }
                 resp.isSuccessful
             }
         } catch (e: Exception) {
             Log.w(TAG, "Network PUT failed at $path: ${e.message}")
             isOnline = false
+            lastNetworkError = e.message
             false
         }
     }
@@ -268,13 +279,17 @@ class FirebaseRtdbClient {
             http.newCall(req).execute().use { resp ->
                 isOnline = resp.isSuccessful
                 if (!resp.isSuccessful) {
+                    lastNetworkError = "PATCH $path HTTP ${resp.code}"
                     Log.w(TAG, "PATCH failed $path code=${resp.code}")
+                } else {
+                    lastNetworkError = null
                 }
                 resp.isSuccessful
             }
         } catch (e: Exception) {
             Log.w(TAG, "Network PATCH failed at $path: ${e.message}")
             isOnline = false
+            lastNetworkError = e.message
             false
         }
     }
@@ -288,11 +303,12 @@ class FirebaseRtdbClient {
             }
         } catch (e: Exception) {
             isOnline = false
+            lastNetworkError = e.message
             false
         }
     }
 
-    // --- Global Config (lenient parser handles legacy fields & RTDB arrays/maps) ---
+    // --- Global Config (lenient parser handles legacy fields, APK lock, & custom access codes) ---
     suspend fun fetchGlobalConfig(): GlobalConfig? = withContext(Dispatchers.IO) {
         try {
             val req = Request.Builder().url("$BASE_URL/config.json").get().build()
@@ -305,25 +321,40 @@ class FirebaseRtdbClient {
                 val regOpen = obj.optBoolean("registrationOpen", true)
                 val pwdHash = obj.optString("directorPasswordHash", GlobalConfig().directorPasswordHash)
                     .ifBlank { GlobalConfig().directorPasswordHash }
+                val customPwdSet = obj.optBoolean("directorCustomPasswordSet", false)
+                val apkLocked = obj.optBoolean("apkDownloadLocked", false)
+                val apkUrl = obj.optString("apkDownloadUrl", com.example.data.model.MxConstants.DEFAULT_APK_URL)
+                    .ifBlank { com.example.data.model.MxConstants.DEFAULT_APK_URL }
                 val visitsCount = obj.optInt("visitCount", 0)
-                val visitsList = mutableListOf<String>()
-                when (val lv = obj.opt("lastVisits")) {
-                    is JSONArray -> {
-                        for (i in 0 until lv.length()) {
-                            lv.optString(i).takeIf { it.isNotBlank() }?.let { visitsList.add(it) }
-                        }
-                    }
-                    is JSONObject -> {
-                        val ks = lv.keys()
-                        while (ks.hasNext()) {
-                            val k = ks.next()
-                            lv.optString(k).takeIf { it.isNotBlank() }?.let { visitsList.add(it) }
-                        }
+                val visitsList = extractStringList(obj.opt("lastVisits"))
+
+                val codesMap = linkedMapOf<String, com.example.data.model.InviteDownloadCode>()
+                val acObj = obj.optJSONObject("accessCodes")
+                if (acObj != null) {
+                    val cKeys = acObj.keys()
+                    while (cKeys.hasNext()) {
+                        val ck = cKeys.next()
+                        val item = acObj.optJSONObject(ck) ?: continue
+                        val codeVal = item.optString("code", ck).ifBlank { ck }.uppercase()
+                        codesMap[codeVal] = com.example.data.model.InviteDownloadCode(
+                            code = codeVal,
+                            circuitName = item.optString("circuitName", ""),
+                            note = item.optString("note", ""),
+                            promoteOfficial = item.optBoolean("promoteOfficial", true),
+                            active = item.optBoolean("active", true),
+                            redeemedCount = item.optInt("redeemedCount", 0),
+                            createdAtMs = item.optLong("createdAtMs", 0L)
+                        )
                     }
                 }
+
                 GlobalConfig(
                     registrationOpen = regOpen,
                     directorPasswordHash = pwdHash,
+                    directorCustomPasswordSet = customPwdSet,
+                    apkDownloadLocked = apkLocked,
+                    apkDownloadUrl = apkUrl,
+                    accessCodes = codesMap,
                     visitCount = visitsCount,
                     lastVisits = visitsList
                 )
@@ -387,9 +418,8 @@ class FirebaseRtdbClient {
     suspend fun clearCircuitRoomLaps(circuitId: String): Boolean =
         deletePath("laps/$circuitId")
 
-    // --- Antennas ---
-    suspend fun fetchAntennas(circuitId: String): Map<String, AntennaConfig> {
-        val fetched = getMap<AntennaConfig>("antennas/$circuitId")
+    // --- Antennas (Fault-tolerant parser so partial/null RTDB fields NEVER drop a connected camera!) ---
+    suspend fun fetchAntennas(circuitId: String): Map<String, AntennaConfig> = withContext(Dispatchers.IO) {
         val merged = linkedMapOf(
             AntennaStation.ANTENA_1.id to AntennaConfig(
                 antennaId = AntennaStation.ANTENA_1.id,
@@ -404,14 +434,156 @@ class FirebaseRtdbClient {
                 circuitId = circuitId
             )
         )
-        fetched.forEach { (key, value) ->
-            val id = value.antennaId.ifBlank { key }
-            merged[key] = value.copy(
-                antennaId = id,
-                circuitId = value.circuitId.ifBlank { circuitId }
-            )
+        try {
+            val req = Request.Builder().url("$BASE_URL/antennas/$circuitId.json").get().build()
+            http.newCall(req).execute().use { resp ->
+                val raw = resp.body?.string()
+                isOnline = resp.isSuccessful
+                if (!resp.isSuccessful || raw.isNullOrBlank() || raw == "null") {
+                    return@withContext merged
+                }
+                val root = JSONObject(raw)
+                val keys = root.keys()
+                while (keys.hasNext()) {
+                    val key = keys.next()
+                    val child = root.optJSONObject(key) ?: continue
+                    val parsed = parseAntennaConfigSafe(circuitId, key, child)
+                    merged[parsed.antennaId] = parsed
+                }
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "fetchAntennas failed: ${e.message}")
+            isOnline = false
+            lastNetworkError = e.message
         }
-        return merged
+        merged
+    }
+
+    /**
+     * Scans all circuits under `antennas.json` (shallow telemetry check) so Director immediately notices
+     * if a camera phone is broadcasting inside a different circuit ID.
+     */
+    suspend fun fetchAllCircuitAntennas(): Map<String, Map<String, AntennaConfig>> = withContext(Dispatchers.IO) {
+        val out = linkedMapOf<String, Map<String, AntennaConfig>>()
+        try {
+            val req = Request.Builder().url("$BASE_URL/antennas.json").get().build()
+            http.newCall(req).execute().use { resp ->
+                val raw = resp.body?.string()
+                if (!resp.isSuccessful || raw.isNullOrBlank() || raw == "null") return@withContext out
+                val root = JSONObject(raw)
+                val cKeys = root.keys()
+                while (cKeys.hasNext()) {
+                    val cid = cKeys.next()
+                    val cObj = root.optJSONObject(cid) ?: continue
+                    val subMap = linkedMapOf<String, AntennaConfig>()
+                    val aKeys = cObj.keys()
+                    while (aKeys.hasNext()) {
+                        val aid = aKeys.next()
+                        val aObj = cObj.optJSONObject(aid) ?: continue
+                        subMap[aid] = parseAntennaConfigSafe(cid, aid, aObj)
+                    }
+                    out[cid] = subMap
+                }
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "fetchAllCircuitAntennas failed: ${e.message}")
+        }
+        out
+    }
+
+    private fun parseAntennaConfigSafe(circuitId: String, key: String, obj: JSONObject): AntennaConfig {
+        val id = obj.optString("antennaId", key).ifBlank { key }
+        val cid = obj.optString("circuitId", circuitId).ifBlank { circuitId }
+        val modeStr = obj.optString("detectionMode", "ANY_PASS")
+        val roiSizeStr = obj.optString("roiSize", "M")
+        val roiHeightStr = obj.optString("roiHeight", "MEDIUM")
+        val orientStr = obj.optString("lineOrientation", "VERTICAL")
+        val dirStr = obj.optString("directionFilter", "ANY")
+        val antiVibStr = obj.optString("antiVibration", "MEDIUM")
+
+        val labSamples = mutableListOf<com.example.data.model.LabSample>()
+        when (val labNode = obj.opt("lastDetectedLab")) {
+            is JSONArray -> {
+                for (i in 0 until labNode.length()) {
+                    labNode.optJSONObject(i)?.let { s ->
+                        labSamples += com.example.data.model.LabSample(
+                            l = s.optDouble("l", 0.0),
+                            a = s.optDouble("a", 0.0),
+                            b = s.optDouble("b", 0.0),
+                            hex = s.optString("hex", "#FFFFFF").ifBlank { "#FFFFFF" },
+                            colorName = s.optString("colorName", "Color")
+                        )
+                    }
+                }
+            }
+            is JSONObject -> {
+                val lk = labNode.keys()
+                while (lk.hasNext()) {
+                    labNode.optJSONObject(lk.next())?.let { s ->
+                        labSamples += com.example.data.model.LabSample(
+                            l = s.optDouble("l", 0.0),
+                            a = s.optDouble("a", 0.0),
+                            b = s.optDouble("b", 0.0),
+                            hex = s.optString("hex", "#FFFFFF").ifBlank { "#FFFFFF" },
+                            colorName = s.optString("colorName", "Color")
+                        )
+                    }
+                }
+            }
+        }
+
+        return AntennaConfig(
+            antennaId = id,
+            circuitId = cid,
+            status = obj.optString("status", "WAITING_CALIBRATION"),
+            isCalibrated = obj.optBoolean("isCalibrated", false),
+            calibrateCommandAtMs = obj.optLong("calibrateCommandAtMs", 0L),
+            detectionMode = runCatching { com.example.data.model.DetectionMode.valueOf(modeStr) }
+                .getOrDefault(com.example.data.model.DetectionMode.ANY_PASS),
+            roiSize = runCatching { com.example.data.model.RoiSize.valueOf(roiSizeStr) }
+                .getOrDefault(com.example.data.model.RoiSize.M),
+            roiHeight = runCatching { com.example.data.model.RoiHeight.valueOf(roiHeightStr) }
+                .getOrDefault(com.example.data.model.RoiHeight.MEDIUM),
+            lineOrientation = runCatching { com.example.data.model.LineOrientation.valueOf(orientStr) }
+                .getOrDefault(com.example.data.model.LineOrientation.VERTICAL),
+            linePosition = obj.optDouble("linePosition", 0.5).toFloat().coerceIn(0.1f, 0.9f),
+            directionFilter = runCatching { com.example.data.model.PassingDirection.valueOf(dirStr) }
+                .getOrDefault(com.example.data.model.PassingDirection.ANY),
+            aiStewardEnabled = obj.optBoolean("aiStewardEnabled", true),
+            antiVibration = runCatching { com.example.data.model.AntiVibrationLevel.valueOf(antiVibStr) }
+                .getOrDefault(com.example.data.model.AntiVibrationLevel.MEDIUM),
+            lastSnapshotBase64 = obj.optString("lastSnapshotBase64", ""),
+            lastPhotoFinishBase64 = obj.optString("lastPhotoFinishBase64", ""),
+            lastDetectedColors = extractStringList(obj.opt("lastDetectedColors")),
+            lastDetectedHexes = extractStringList(obj.opt("lastDetectedHexes")),
+            lastDetectedLab = labSamples,
+            lastDetectedDorsal = obj.optString("lastDetectedDorsal", ""),
+            lastConfidence = obj.optDouble("lastConfidence", 0.0).toFloat(),
+            activeFps = obj.optInt("activeFps", 30),
+            lastTriggerTimestampMs = obj.optLong("lastTriggerTimestampMs", 0L),
+            matchedRiderId = obj.optString("matchedRiderId", ""),
+            matchedRiderName = obj.optString("matchedRiderName", ""),
+            lastHeartbeatMs = obj.optLong("lastHeartbeatMs", 0L)
+        )
+    }
+
+    private fun extractStringList(raw: Any?): List<String> {
+        val list = mutableListOf<String>()
+        when (raw) {
+            is JSONArray -> {
+                for (i in 0 until raw.length()) {
+                    raw.optString(i).takeIf { it.isNotBlank() }?.let { list.add(it) }
+                }
+            }
+            is JSONObject -> {
+                val ks = raw.keys()
+                while (ks.hasNext()) {
+                    val k = ks.next()
+                    raw.optString(k).takeIf { it.isNotBlank() }?.let { list.add(it) }
+                }
+            }
+        }
+        return list
     }
 
     suspend fun saveAntennaConfig(config: AntennaConfig): Boolean =

@@ -243,12 +243,14 @@ fun PilotAuthDialog(
 
 @Composable
 fun DirectorUnlockDialog(
+    state: MxUiState,
     strings: MxStrings,
     onDismiss: () -> Unit,
-    onAttemptUnlock: (String) -> Boolean
+    onAttemptUnlock: (String, Boolean) -> Boolean
 ) {
     val mx = LocalMxColors.current
-    var pwd by remember { mutableStateOf("") }
+    var pwd by remember { mutableStateOf(state.rememberedDirectorPass) }
+    var rememberCreds by remember { mutableStateOf(state.rememberDirectorPass) }
     var wrong by remember { mutableStateOf(false) }
 
     AlertDialog(
@@ -256,14 +258,14 @@ fun DirectorUnlockDialog(
         containerColor = MaterialTheme.colorScheme.surface,
         titleContentColor = MaterialTheme.colorScheme.onSurface,
         textContentColor = MaterialTheme.colorScheme.onSurface,
-        title = { Text(strings.directorConsole, style = MaterialTheme.typography.titleLarge) },
+        title = { Text(strings.directorAccess, style = MaterialTheme.typography.titleLarge) },
         text = {
             Column {
                 Text(
                     text = if (strings.isSpanish) {
-                        "Acceso protegido para organizador del circuito (clave por defecto: MXPRO2026)."
+                        "Dirección"
                     } else {
-                        "Organizer protected access (default key: MXPRO2026)."
+                        "Director"
                     },
                     style = MaterialTheme.typography.bodyMedium,
                     color = mx.subtleText
@@ -279,11 +281,27 @@ fun DirectorUnlockDialog(
                     colors = mxTextFieldColors(),
                     modifier = Modifier.fillMaxWidth().testTag("director_pwd_input")
                 )
+                Spacer(Modifier.height(6.dp))
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Checkbox(
+                        checked = rememberCreds,
+                        onCheckedChange = { rememberCreds = it },
+                        colors = CheckboxDefaults.colors(
+                            checkedColor = mx.goldAccent,
+                            checkmarkColor = contrastTextOn(mx.goldAccent),
+                            uncheckedColor = mx.subtleText
+                        )
+                    )
+                    Text(
+                        if (strings.isSpanish) "Guardar contraseña" else "Save password",
+                        color = MaterialTheme.colorScheme.onSurface
+                    )
+                }
             }
         },
         confirmButton = {
             Mx3dButton(
-                onClick = { if (!onAttemptUnlock(pwd)) wrong = true },
+                onClick = { if (!onAttemptUnlock(pwd, rememberCreds)) wrong = true },
                 containerColor = mx.goldAccent,
                 contentColor = contrastTextOn(mx.goldAccent),
                 modifier = Modifier.testTag("director_unlock_button")
@@ -699,15 +717,17 @@ fun AppGuideDialog(strings: MxStrings, onDismiss: () -> Unit) {
         text = {
             Text(
                 text = if (strings.isSpanish) {
-                    "1. Coloca dos teléfonos en meta como Antena 1 y Antena 2 con fondo gris/negro mate.\n" +
-                        "2. Desde Dirección (clave por defecto: MXPRO2026) calibra pista vacía y ajusta el Túnel ROI.\n" +
-                        "3. En Warm-Up captura los colores CIE Lab de cada carenado con 2-3 pasadas.\n" +
-                        "4. Los pilotos ruedan en Sala Pista (Modo Emisora o Bolsillo) y boxes usan Club Aficionados / Pit-Board."
+                    "1. Úsala en cualquier sitio: descampado, parking, el jardín de tu casa o circuito oficial para cronometrar tu Losi Promoto.\n" +
+                        "2. Coloca un teléfono como Antena (Solo o con Dirección) apuntando a tu línea de paso.\n" +
+                        "3. Calibra pista vacía en Antena o desde Dirección y elige Cualquier Paso o Multi-Color CIE.\n" +
+                        "4. Rueda en Sala Pista con Modo Bolsillo (altavoz o cascos) mientras Dirección y boxes ven los tiempos en vivo.\n" +
+                        "5. ¿Quieres pasar a Circuito Oficial y obtener códigos de acceso? Escríbenos desde el Buzón."
                 } else {
-                    "1. Place two trackside phones at the finish line as Antenna 1 & 2 against a matte gray/black backdrop.\n" +
-                        "2. In Race Director (default key: MXPRO2026), calibrate empty track and align the ROI Tunnel.\n" +
-                        "3. During Warm-Up assign CIE Lab fairing colors in 2-3 passes.\n" +
-                        "4. Riders race with Radio Mount or Pocket Mode while fans/pit-crew use Live Fan & Pit-Board."
+                    "1. Use anywhere: open lot, parking spot, backyard, or official MX track to time your Losi Promoto.\n" +
+                        "2. Place a phone as Antenna (Solo or with Director) aimed at your finish line.\n" +
+                        "3. Calibrate empty track on the Antenna or from Director, choosing Any Pass or CIE Multi-Color.\n" +
+                        "4. Ride in Track Room with Pocket Mode (speaker or headset) while Director & pit-crew watch live.\n" +
+                        "5. Want to register as an Official Circuit and request invite codes? Message us via Inbox."
                 },
                 style = MaterialTheme.typography.bodyMedium
             )
@@ -720,12 +740,14 @@ fun AppGuideDialog(strings: MxStrings, onDismiss: () -> Unit) {
 fun ReportInboxDialog(
     state: MxUiState,
     strings: MxStrings,
+    initialType: String = "BUG",
     onDismiss: () -> Unit,
-    onSubmit: (String, String, String) -> Unit
+    onSubmit: (String, String, String, String) -> Unit
 ) {
     val mx = LocalMxColors.current
     var sender by remember { mutableStateOf(state.currentRider?.name ?: "") }
-    var type by remember { mutableStateOf("BUG") }
+    var type by remember { mutableStateOf(initialType) }
+    var circuitReq by remember { mutableStateOf("") }
     var msg by remember { mutableStateOf("") }
 
     AlertDialog(
@@ -735,7 +757,10 @@ fun ReportInboxDialog(
         textContentColor = MaterialTheme.colorScheme.onSurface,
         title = { Text(strings.reportInbox, style = MaterialTheme.typography.titleLarge) },
         text = {
-            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Column(
+                modifier = Modifier.verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
                 OutlinedTextField(
                     value = sender,
                     onValueChange = { sender = it },
@@ -743,14 +768,53 @@ fun ReportInboxDialog(
                     singleLine = true,
                     colors = mxTextFieldColors()
                 )
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    FilterChip(selected = type == "BUG", onClick = { type = "BUG" }, label = { Text("Bug") }, colors = mxChipColors())
-                    FilterChip(selected = type == "SUGGESTION", onClick = { type = "SUGGESTION" }, label = { Text(if (strings.isSpanish) "Sugerencia" else "Suggestion") }, colors = mxChipColors())
+                LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    item {
+                        FilterChip(
+                            selected = type == "OFFICIAL_REQUEST",
+                            onClick = { type = "OFFICIAL_REQUEST" },
+                            label = { Text(if (strings.isSpanish) "Circuito Oficial / Código" else "Official Circuit / Code") },
+                            colors = mxChipColors()
+                        )
+                    }
+                    item {
+                        FilterChip(
+                            selected = type == "BUG",
+                            onClick = { type = "BUG" },
+                            label = { Text("Bug") },
+                            colors = mxChipColors()
+                        )
+                    }
+                    item {
+                        FilterChip(
+                            selected = type == "SUGGESTION",
+                            onClick = { type = "SUGGESTION" },
+                            label = { Text(if (strings.isSpanish) "Sugerencia" else "Suggestion") },
+                            colors = mxChipColors()
+                        )
+                    }
+                }
+                if (type == "OFFICIAL_REQUEST") {
+                    OutlinedTextField(
+                        value = circuitReq,
+                        onValueChange = { circuitReq = it },
+                        label = { Text(if (strings.isSpanish) "Nombre de tu Circuito / Club" else "Your Circuit / Club Name") },
+                        singleLine = true,
+                        colors = mxTextFieldColors()
+                    )
                 }
                 OutlinedTextField(
                     value = msg,
                     onValueChange = { msg = it },
-                    label = { Text(if (strings.isSpanish) "Descripción" else "Details") },
+                    label = {
+                        Text(
+                            if (type == "OFFICIAL_REQUEST") {
+                                if (strings.isSpanish) "Ubicación y solicitud de código / acceso" else "Location & code/official request"
+                            } else {
+                                if (strings.isSpanish) "Descripción" else "Details"
+                            }
+                        )
+                    },
                     minLines = 3,
                     colors = mxTextFieldColors()
                 )
@@ -758,7 +822,7 @@ fun ReportInboxDialog(
         },
         confirmButton = {
             Mx3dButton(
-                onClick = { onSubmit(sender, type, msg) },
+                onClick = { onSubmit(sender, type, msg, circuitReq) },
                 containerColor = mx.goldAccent,
                 contentColor = contrastTextOn(mx.goldAccent)
             ) {

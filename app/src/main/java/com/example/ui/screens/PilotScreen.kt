@@ -1,8 +1,13 @@
 package com.example.ui.screens
 
+import android.Manifest
+import android.content.pm.PackageManager
+import android.os.Build
+import android.os.SystemClock
 import androidx.activity.compose.BackHandler
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
-import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -18,15 +23,15 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.BatteryAlert
 import androidx.compose.material.icons.filled.CameraAlt
 import androidx.compose.material.icons.filled.Casino
 import androidx.compose.material.icons.filled.Flag
-import androidx.compose.material.icons.filled.Lock
+import androidx.compose.material.icons.filled.Group
 import androidx.compose.material.icons.filled.Logout
+import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Radio
 import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material.icons.filled.Timer
@@ -49,11 +54,11 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
-import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.core.content.ContextCompat
 import com.example.data.model.AntennaStation
 import com.example.data.model.FlagState
 import com.example.data.model.GameMode
@@ -68,6 +73,7 @@ import com.example.ui.components.GlassRaceCard
 import com.example.ui.components.Mx3dButton
 import com.example.ui.components.Mx3dOutlinedButton
 import com.example.ui.components.MxTopHeader
+import com.example.ui.components.PocketModeOverlay
 import com.example.ui.components.RiderDorsalBadge
 import com.example.ui.components.SupercrossStartGateCard
 import com.example.ui.theme.LocalMxColors
@@ -75,6 +81,7 @@ import com.example.ui.theme.contrastTextOn
 import com.example.ui.theme.mxChipColors
 import com.example.ui.viewmodel.MxProViewModel
 import com.example.ui.viewmodel.MxUiState
+import kotlin.math.abs
 import kotlinx.coroutines.delay
 
 @Composable
@@ -85,10 +92,15 @@ fun PilotScreen(
     onBack: () -> Unit
 ) {
     val mx = LocalMxColors.current
+    val context = LocalContext.current
     var selectedTab by remember { mutableIntStateOf(0) }
     var transmitterMode by remember { mutableStateOf(false) }
     var pocketMode by remember { mutableStateOf(false) }
     var soloAntennaMode by remember { mutableStateOf(false) }
+
+    val notifLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) {}
 
     var liveNowMs by remember { mutableLongStateOf(viewModel.syncedNowMs()) }
     LaunchedEffect(Unit) {
@@ -118,30 +130,19 @@ fun PilotScreen(
         return
     }
 
-    // OLED Black Pocket Mode (locked against touch, double-tap to unlock)
+    // OLED Black Pocket Mode (continuous background audio + speaker/headset routing)
     if (pocketMode) {
-        BackHandler { pocketMode = false }
-        Box(
-            modifier = Modifier
-                .fillMaxSize()
-                .background(Color.Black)
-                .pointerInput(Unit) {
-                    detectTapGestures(onDoubleTap = { pocketMode = false })
-                }
-                .testTag("pocket_mode_overlay"),
-            contentAlignment = Alignment.Center
-        ) {
-            Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.padding(24.dp)) {
-                Icon(Icons.Default.Lock, contentDescription = null, tint = Color(0xFF475569), modifier = Modifier.size(48.dp))
-                Spacer(Modifier.height(14.dp))
-                Text(
-                    text = strings.pocketModeLocked,
-                    color = Color(0xFF64748B),
-                    style = MaterialTheme.typography.titleMedium,
-                    textAlign = TextAlign.Center
-                )
-            }
-        }
+        PocketModeOverlay(
+            titleLocked = strings.pocketModeLocked,
+            isSpanish = strings.isSpanish,
+            audioRoute = state.audioOutputRoute,
+            onSelectAudioRoute = { viewModel.setAudioOutputRoute(it) },
+            onUnlock = {
+                pocketMode = false
+                viewModel.setPocketModeAudioActive(false)
+            },
+            modifier = Modifier.fillMaxSize()
+        )
         return
     }
 
@@ -231,7 +232,15 @@ fun PilotScreen(
                         myPosition = myPosition,
                         currentLapElapsedMs = currentLapElapsedMs,
                         onEnableTransmitterMode = { transmitterMode = true },
-                        onEnablePocketMode = { pocketMode = true },
+                        onEnablePocketMode = {
+                            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+                                ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
+                            ) {
+                                notifLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+                            }
+                            viewModel.setPocketModeAudioActive(true)
+                            pocketMode = true
+                        },
                         onEnableSoloAntennaMode = { soloAntennaMode = true },
                         onLogout = {
                             viewModel.logoutRider()
@@ -266,8 +275,13 @@ private fun PilotTrackRoomTab(
 ) {
     val mx = LocalMxColors.current
     val room = state.roomState
-    val ant1Online = (state.antennas[AntennaStation.ANTENA_1.id]?.lastHeartbeatMs ?: 0L) > liveNowMs - 15_000L
-    val ant2Online = (state.antennas[AntennaStation.ANTENA_2.id]?.lastHeartbeatMs ?: 0L) > liveNowMs - 15_000L
+    val nowMono = SystemClock.elapsedRealtime()
+    val ant1Cfg = state.antennas[AntennaStation.ANTENA_1.id]
+    val ant2Cfg = state.antennas[AntennaStation.ANTENA_2.id]
+    val ant1Online = (ant1Cfg != null && abs(liveNowMs - ant1Cfg.lastHeartbeatMs) < 35_000L) ||
+        ((nowMono - (state.antennaLastChangeMonoMs[AntennaStation.ANTENA_1.id] ?: 0L)) in 0L..25_000L)
+    val ant2Online = (ant2Cfg != null && abs(liveNowMs - ant2Cfg.lastHeartbeatMs) < 35_000L) ||
+        ((nowMono - (state.antennaLastChangeMonoMs[AntennaStation.ANTENA_2.id] ?: 0L)) in 0L..25_000L)
     val rider = state.currentRider
     val roomRider = rider?.let { room.activeRiders[it.id] }
 
@@ -465,10 +479,35 @@ private fun PilotTrackRoomTab(
             )
         }
 
-        // Friendly Mode (No Director)
-        GlassRaceCard {
+        // Group Heat Mode without Director ("Manga Libre entre Pilotos")
+        GlassRaceCard(accentBorder = mx.smBadge.copy(alpha = 0.55f)) {
             Column(modifier = Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Text(strings.friendlyModeTitle, style = MaterialTheme.typography.titleLarge, color = mx.smBadge)
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(Icons.Default.Group, contentDescription = null, tint = mx.smBadge)
+                        Spacer(Modifier.width(6.dp))
+                        Text(
+                            if (strings.isSpanish) "Manga entre Pilotos (Sin Director)" else "Group Heat (No Director)",
+                            style = MaterialTheme.typography.titleLarge,
+                            color = mx.smBadge
+                        )
+                    }
+                    Text(
+                        "${room.activeRiders.size} ${if (strings.isSpanish) "en pista" else "on track"}",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = mx.telemetryGreen
+                    )
+                }
+                Text(
+                    if (strings.isSpanish) "Los pilotos del circuito os unís aquí y lanzáis la manga juntos:"
+                    else "Riders in this circuit join together and start a heat without a Director:",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = mx.subtleText
+                )
                 LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                     items(GameMode.entries) { gm ->
                         FilterChip(
@@ -476,6 +515,30 @@ private fun PilotTrackRoomTab(
                             onClick = { viewModel.updateRoomSettings(gameMode = gm) },
                             label = { Text(gm.name.replace("_", " ")) },
                             colors = mxChipColors()
+                        )
+                    }
+                }
+                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    listOf(180, 300, 480).forEach { sec ->
+                        FilterChip(
+                            selected = room.heatDurationSec == sec,
+                            onClick = { viewModel.updateRoomSettings(heatDurationSec = sec) },
+                            label = { Text("${sec / 60}m") },
+                            colors = mxChipColors()
+                        )
+                    }
+                }
+                val latestSample = state.antennas[AntennaStation.ANTENA_1.id]?.lastDetectedLab?.firstOrNull()
+                    ?: state.capturedPasses.firstOrNull()?.samples?.firstOrNull()
+                if (rider != null && latestSample != null) {
+                    Mx3dOutlinedButton(
+                        onClick = { viewModel.assignSingleColorToRider(rider.id, rider.name, latestSample) },
+                        borderColor = mx.goldAccent,
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Text(
+                            if (strings.isSpanish) "Asignarme último color (${latestSample.colorName})"
+                            else "Assign latest color (${latestSample.colorName})"
                         )
                     }
                 }
@@ -502,6 +565,19 @@ private fun PilotTrackRoomTab(
                         borderColor = mx.smBadge,
                         modifier = Modifier.weight(1f)
                     ) { Text(strings.randomGate, maxLines = 1) }
+                }
+                Mx3dButton(
+                    onClick = { viewModel.startFriendlyDirectHeat(room.heatDurationSec) },
+                    containerColor = mx.telemetryGreen,
+                    contentColor = contrastTextOn(mx.telemetryGreen),
+                    modifier = Modifier.fillMaxWidth().testTag("friendly_start_direct_heat_btn")
+                ) {
+                    Icon(Icons.Default.PlayArrow, contentDescription = null)
+                    Spacer(Modifier.width(6.dp))
+                    Text(
+                        if (strings.isSpanish) "Lanzar Manga Ya (${room.heatDurationSec / 60} min)"
+                        else "Start Group Heat Now (${room.heatDurationSec / 60} min)"
+                    )
                 }
                 if (room.sessionPhase == SessionPhase.WARMUP ||
                     room.sessionPhase == SessionPhase.RACING ||

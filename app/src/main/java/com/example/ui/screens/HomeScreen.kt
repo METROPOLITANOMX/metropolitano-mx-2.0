@@ -33,17 +33,23 @@ import androidx.compose.material.icons.filled.DarkMode
 import androidx.compose.material.icons.filled.EmojiEvents
 import androidx.compose.material.icons.filled.GpsFixed
 import androidx.compose.material.icons.filled.HelpOutline
+import androidx.compose.material.icons.filled.Key
 import androidx.compose.material.icons.filled.LightMode
 import androidx.compose.material.icons.filled.LiveTv
+import androidx.compose.material.icons.filled.Lock
+import androidx.compose.material.icons.filled.Mail
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.filled.SportsMotorsports
 import androidx.compose.material.icons.filled.Translate
+import androidx.compose.material.icons.filled.Verified
 import androidx.compose.material.icons.filled.WarningAmber
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.minimumInteractiveComponentSize
@@ -78,6 +84,7 @@ import com.example.ui.components.SurfaceBadge
 import com.example.ui.components.metallicShimmerSweep
 import com.example.ui.theme.LocalMxColors
 import com.example.ui.theme.contrastTextOn
+import com.example.ui.theme.mxTextFieldColors
 import com.example.ui.viewmodel.MxProViewModel
 import com.example.ui.viewmodel.MxUiState
 
@@ -100,6 +107,8 @@ fun HomeScreen(
     var showRankingPaddockDialog by remember { mutableStateOf(false) }
     var showGuideDialog by remember { mutableStateOf(false) }
     var showReportDialog by remember { mutableStateOf(false) }
+    var reportInitialType by remember { mutableStateOf("BUG") }
+    var showApkCodeDialog by remember { mutableStateOf(false) }
     var circuitDropdownExpanded by remember { mutableStateOf(false) }
 
     val locationLauncher = rememberLauncherForActivityResult(
@@ -258,22 +267,6 @@ fun HomeScreen(
                             style = MaterialTheme.typography.bodyMedium,
                             color = Color(0xFFE2E8F0)
                         )
-                        Spacer(Modifier.height(6.dp))
-                        Row(
-                            modifier = Modifier
-                                .clip(RoundedCornerShape(50))
-                                .background(Color.Black.copy(alpha = 0.45f))
-                                .clickable { viewModel.recalibrateClock() }
-                                .padding(horizontal = 12.dp, vertical = 5.dp)
-                                .testTag("clock_sync_pill"),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Text(
-                                text = "RTDB SYNC ${if (state.serverTimeOffsetMs >= 0) "+" else ""}${state.serverTimeOffsetMs}ms • RTT ${state.lastSyncRttMs}ms • ${if (state.isOnline) "ONLINE" else "OFFLINE"}",
-                                style = MaterialTheme.typography.labelSmall,
-                                color = if (state.isOnline) Color(0xFF4ADE80) else Color(0xFFF87171)
-                            )
-                        }
                     }
                 }
             }
@@ -595,37 +588,246 @@ fun HomeScreen(
 
                 Mx3dOutlinedButton(
                     onClick = {
-                        val msg = if (strings.isSpanish) {
-                            "🏁 ¡Únete a Metropolitano MX Pro! Cronometraje RC 1/4 en vivo y setups Losi Promoto."
+                        val isLocked = state.globalConfig.apkDownloadLocked &&
+                            !state.installCodeUnlocked &&
+                            !state.directorUnlocked
+                        if (isLocked) {
+                            showApkCodeDialog = true
                         } else {
-                            "🏁 Join Metropolitano MX Pro! Live 1/4 RC lap timing & Losi Promoto setups."
+                            val msg = if (strings.isSpanish) {
+                                "🏁 ¡Únete a Metropolitano MX Pro! Cronometraje RC 1/4 en vivo y setups Losi Promoto: ${state.globalConfig.apkDownloadUrl}"
+                            } else {
+                                "🏁 Join Metropolitano MX Pro! Live 1/4 RC lap timing & Losi Promoto setups: ${state.globalConfig.apkDownloadUrl}"
+                            }
+                            CardExporter.shareWhatsAppText(context, msg)
                         }
-                        CardExporter.shareWhatsAppText(context, msg)
                     },
-                    borderColor = mx.telemetryGreen,
+                    borderColor = if (state.globalConfig.apkDownloadLocked && !state.installCodeUnlocked && !state.directorUnlocked) mx.racingRed else mx.telemetryGreen,
                     modifier = Modifier
                         .weight(1f)
                         .testTag("home_whatsapp_invite_button")
                 ) {
-                    Icon(Icons.Default.Share, contentDescription = null, modifier = Modifier.size(16.dp), tint = mx.telemetryGreen)
+                    Icon(
+                        imageVector = if (state.globalConfig.apkDownloadLocked && !state.installCodeUnlocked && !state.directorUnlocked) Icons.Default.Lock else Icons.Default.Share,
+                        contentDescription = null,
+                        modifier = Modifier.size(16.dp),
+                        tint = if (state.globalConfig.apkDownloadLocked && !state.installCodeUnlocked && !state.directorUnlocked) mx.racingRed else mx.telemetryGreen
+                    )
                     Spacer(Modifier.width(4.dp))
-                    Text(strings.inviteWhatsApp, maxLines = 1)
+                    Text(
+                        if (state.globalConfig.apkDownloadLocked && !state.installCodeUnlocked && !state.directorUnlocked) {
+                            if (strings.isSpanish) "APK Bloq." else "APK Locked"
+                        } else strings.inviteWhatsApp,
+                        maxLines = 1
+                    )
                 }
 
                 Mx3dOutlinedButton(
-                    onClick = { showReportDialog = true },
+                    onClick = {
+                        reportInitialType = "BUG"
+                        showReportDialog = true
+                    },
                     borderColor = mx.racingRed,
                     modifier = Modifier
                         .weight(1f)
                         .testTag("home_report_inbox_button")
                 ) {
-                    Icon(Icons.Default.BugReport, contentDescription = null, modifier = Modifier.size(16.dp), tint = mx.racingRed)
+                    Icon(Icons.Default.Mail, contentDescription = null, modifier = Modifier.size(16.dp), tint = mx.racingRed)
                     Spacer(Modifier.width(4.dp))
                     Text(strings.reportInbox, maxLines = 1)
                 }
             }
+
+            Spacer(Modifier.height(12.dp))
+
+            // Universal Track & Official Circuit Program Card
+            GlassRaceCard(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .widthIn(max = 640.dp),
+                accentBorder = mx.goldAccent.copy(alpha = 0.55f)
+            ) {
+                Column(modifier = Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(Icons.Default.Verified, contentDescription = null, tint = mx.goldAccent, modifier = Modifier.size(20.dp))
+                        Spacer(Modifier.width(6.dp))
+                        Text(
+                            if (strings.isSpanish) "Cronometra tu Losi Promoto en Cualquier Lugar"
+                            else "Time Your Losi Promoto Anywhere",
+                            style = MaterialTheme.typography.titleMedium,
+                            color = mx.goldAccent
+                        )
+                    }
+                    Text(
+                        text = if (strings.isSpanish) {
+                            "Funciona en un descampado, parking, el jardín de tu casa o en circuito oficial. Crea tu trazado y saca tus tiempos al instante.\n¿Tienes un club o circuito? Pide tu código por Buzón para desbloquear la APK y pasar a Circuito Oficial."
+                        } else {
+                            "Works in an open lot, parking area, your backyard, or an official MX track. Create your track and log real lap times anywhere.\nOwn a track or club? Request an Official Circuit & APK code via Inbox."
+                        },
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = mx.subtleText
+                    )
+                    Mx3dButton(
+                        onClick = {
+                            reportInitialType = "OFFICIAL_REQUEST"
+                            showReportDialog = true
+                        },
+                        containerColor = mx.smBadge,
+                        contentColor = contrastTextOn(mx.smBadge),
+                        modifier = Modifier.fillMaxWidth().testTag("home_request_official_button")
+                    ) {
+                        Icon(Icons.Default.Mail, contentDescription = null, modifier = Modifier.size(18.dp))
+                        Spacer(Modifier.width(6.dp))
+                        Text(
+                            if (strings.isSpanish) "Pedir Código / Ser Circuito Oficial (Buzón)"
+                            else "Request Code / Become Official Circuit (Inbox)"
+                        )
+                    }
+                }
+            }
             Spacer(Modifier.height(20.dp))
         }
+    }
+
+    // Installation Lock Gate for new/locked installs when Director turns APK lock ON
+    val mustGateInstall = state.globalConfig.apkDownloadLocked &&
+        !state.installCodeUnlocked &&
+        !state.directorUnlocked &&
+        state.currentRider == null
+    if (mustGateInstall) {
+        var gateCode by remember { mutableStateOf("") }
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(Color.Black.copy(alpha = 0.94f))
+                .padding(24.dp),
+            contentAlignment = Alignment.Center
+        ) {
+            GlassRaceCard(
+                modifier = Modifier.fillMaxWidth().widthIn(max = 520.dp),
+                accentBorder = mx.goldAccent
+            ) {
+                Column(modifier = Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Icon(Icons.Default.Lock, contentDescription = null, tint = mx.racingRed)
+                            Spacer(Modifier.width(8.dp))
+                            Text(
+                                if (strings.isSpanish) "Instalación Protegida" else "Protected Installation",
+                                style = MaterialTheme.typography.titleLarge,
+                                color = mx.goldAccent
+                            )
+                        }
+                        IconButton(onClick = { showDirectorDialog = true }) {
+                            Icon(Icons.Default.AdminPanelSettings, contentDescription = strings.directorAccess, tint = mx.goldAccent)
+                        }
+                    }
+                    Text(
+                        if (strings.isSpanish) {
+                            "Dirección ha activado el acceso exclusivo mediante código de invitación para nuevas instalaciones y circuitos oficiales."
+                        } else {
+                            "Race Director has enabled invite-code protection for new installations and official circuits."
+                        },
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurface
+                    )
+                    OutlinedTextField(
+                        value = gateCode,
+                        onValueChange = { gateCode = it.uppercase() },
+                        label = { Text(if (strings.isSpanish) "Código de Activación" else "Activation Code") },
+                        singleLine = true,
+                        colors = mxTextFieldColors(),
+                        modifier = Modifier.fillMaxWidth().testTag("install_gate_code_input")
+                    )
+                    Mx3dButton(
+                        onClick = { viewModel.redeemInstallOrDownloadCode(gateCode) {} },
+                        containerColor = mx.goldAccent,
+                        contentColor = contrastTextOn(mx.goldAccent),
+                        modifier = Modifier.fillMaxWidth().testTag("install_gate_unlock_button")
+                    ) {
+                        Icon(Icons.Default.Key, contentDescription = null)
+                        Spacer(Modifier.width(6.dp))
+                        Text(if (strings.isSpanish) "Desbloquear con Código" else "Unlock with Code")
+                    }
+                    Mx3dOutlinedButton(
+                        onClick = {
+                            reportInitialType = "OFFICIAL_REQUEST"
+                            showReportDialog = true
+                        },
+                        borderColor = mx.smBadge,
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Icon(Icons.Default.Mail, contentDescription = null, modifier = Modifier.size(16.dp), tint = mx.smBadge)
+                        Spacer(Modifier.width(6.dp))
+                        Text(if (strings.isSpanish) "Solicitar Código por Buzón" else "Request Code via Inbox")
+                    }
+                }
+            }
+        }
+    }
+
+    if (showApkCodeDialog) {
+        var apkCode by remember { mutableStateOf("") }
+        AlertDialog(
+            onDismissRequest = { showApkCodeDialog = false },
+            containerColor = MaterialTheme.colorScheme.surface,
+            titleContentColor = MaterialTheme.colorScheme.onSurface,
+            textContentColor = MaterialTheme.colorScheme.onSurface,
+            title = { Text(if (strings.isSpanish) "Descarga APK Protegida" else "Protected APK Download") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text(
+                        if (strings.isSpanish) {
+                            "La descarga de la APK requiere un código emitido por Dirección para circuitos oficiales."
+                        } else {
+                            "APK download requires a Director-issued code for official circuits."
+                        },
+                        style = MaterialTheme.typography.bodyMedium
+                    )
+                    OutlinedTextField(
+                        value = apkCode,
+                        onValueChange = { apkCode = it.uppercase() },
+                        label = { Text(if (strings.isSpanish) "Introduce tu código" else "Enter your code") },
+                        singleLine = true,
+                        colors = mxTextFieldColors(),
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                }
+            },
+            confirmButton = {
+                Mx3dButton(
+                    onClick = {
+                        viewModel.redeemInstallOrDownloadCode(apkCode) {
+                            showApkCodeDialog = false
+                            val msg = "🏁 Metropolitano MX Pro (${it.circuitName}): ${state.globalConfig.apkDownloadUrl}"
+                            CardExporter.shareWhatsAppText(context, msg)
+                        }
+                    },
+                    containerColor = mx.goldAccent,
+                    contentColor = contrastTextOn(mx.goldAccent)
+                ) {
+                    Text(if (strings.isSpanish) "Validar y Compartir" else "Verify & Share")
+                }
+            },
+            dismissButton = {
+                Row {
+                    TextButton(onClick = {
+                        showApkCodeDialog = false
+                        reportInitialType = "OFFICIAL_REQUEST"
+                        showReportDialog = true
+                    }) {
+                        Text(if (strings.isSpanish) "Pedir Código" else "Request Code", color = mx.smBadge)
+                    }
+                    TextButton(onClick = { showApkCodeDialog = false }) {
+                        Text(if (strings.isSpanish) "Cerrar" else "Close", color = mx.subtleText)
+                    }
+                }
+            }
+        )
     }
 
     if (showAuthDialog) {
@@ -643,10 +845,11 @@ fun HomeScreen(
 
     if (showDirectorDialog) {
         DirectorUnlockDialog(
+            state = state,
             strings = strings,
             onDismiss = { showDirectorDialog = false },
-            onAttemptUnlock = { pwd ->
-                if (viewModel.unlockDirector(pwd)) {
+            onAttemptUnlock = { pwd, rememberCreds ->
+                if (viewModel.unlockDirector(pwd, rememberCreds)) {
                     showDirectorDialog = false
                     onNavigateDirector()
                     true
@@ -683,9 +886,10 @@ fun HomeScreen(
         ReportInboxDialog(
             state = state,
             strings = strings,
+            initialType = reportInitialType,
             onDismiss = { showReportDialog = false },
-            onSubmit = { sender, type, msg ->
-                viewModel.submitAppReport(sender, type, msg)
+            onSubmit = { sender, type, msg, circuitReq ->
+                viewModel.submitAppReport(sender, type, msg, circuitReq)
                 showReportDialog = false
             }
         )

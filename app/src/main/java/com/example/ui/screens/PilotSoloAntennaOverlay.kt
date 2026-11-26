@@ -67,6 +67,7 @@ import com.example.engine.CameraFpsHelper
 import com.example.engine.VisionTimingEngine
 import com.example.i18n.MxStrings
 import com.example.ui.components.GlassRaceCard
+import com.example.ui.components.KeepScreenOnEffect
 import com.example.ui.components.Mx3dButton
 import com.example.ui.theme.LocalMxColors
 import com.example.ui.theme.contrastTextOn
@@ -85,6 +86,7 @@ fun PilotSoloAntennaOverlay(
     onClose: () -> Unit
 ) {
     BackHandler { onClose() }
+    KeepScreenOnEffect(enabled = true)
 
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
@@ -105,6 +107,7 @@ fun PilotSoloAntennaOverlay(
     var lineOrientation by remember { mutableStateOf(LineOrientation.VERTICAL) }
     var calibrated by remember { mutableStateOf(false) }
     var calibratingCountdown by remember { mutableStateOf(0) }
+    var lastMatchedLabel by remember { mutableStateOf("") }
 
     val visionEngine = remember { VisionTimingEngine() }
     val analysisExecutor = remember { Executors.newSingleThreadExecutor() }
@@ -114,7 +117,7 @@ fun PilotSoloAntennaOverlay(
         antennaId = "solo_phone",
         circuitId = state.activeCircuit.id,
         isCalibrated = calibrated,
-        detectionMode = DetectionMode.ANY_PASS,
+        detectionMode = state.soloAntennaDetectionMode,
         roiSize = roiSize,
         roiHeight = RoiHeight.MEDIUM,
         lineOrientation = lineOrientation,
@@ -122,6 +125,7 @@ fun PilotSoloAntennaOverlay(
         antiVibration = AntiVibrationLevel.MEDIUM
     )
     val latestSoloConfig by rememberUpdatedState(soloConfig)
+    val latestProfiles by rememberUpdatedState(state.colorProfiles)
     val latestIsSpanish by rememberUpdatedState(strings.isSpanish)
 
     DisposableEffect(Unit) {
@@ -159,12 +163,15 @@ fun PilotSoloAntennaOverlay(
                                     val res = visionEngine.processFrame(
                                         image = imageProxy,
                                         config = latestSoloConfig,
-                                        profiles = emptyList(),
+                                        profiles = latestProfiles,
                                         syncedNowMs = now,
                                         isSpanish = latestIsSpanish,
                                         captureLiveSnapshot = false
                                     )
                                     if (res != null && res.triggered) {
+                                        lastMatchedLabel = res.matchedProfile?.riderName?.ifBlank {
+                                            res.detectedColors.firstOrNull()?.colorName ?: ""
+                                        } ?: (res.detectedColors.firstOrNull()?.colorName ?: "")
                                         viewModel.handleSoloPilotVisionDetection(res)
                                     }
                                 } finally {
@@ -299,7 +306,7 @@ fun PilotSoloAntennaOverlay(
             }
         }
 
-        // Bottom Controls for Solo Calibration + ROI + Orientation
+        // Bottom Controls for Capture Mode + Solo Calibration + ROI + Orientation
         GlassRaceCard(
             modifier = Modifier
                 .align(Alignment.BottomCenter)
@@ -307,6 +314,35 @@ fun PilotSoloAntennaOverlay(
                 .padding(14.dp)
         ) {
             Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text(
+                    text = if (strings.isSpanish) {
+                        "Modo Captura (Solo o en Grupo sin Director):"
+                    } else {
+                        "Capture Mode (Solo or Group Training):"
+                    } + if (lastMatchedLabel.isNotBlank()) " • $lastMatchedLabel" else "",
+                    style = MaterialTheme.typography.labelMedium,
+                    color = mx.goldAccent
+                )
+                Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
+                    FilterChip(
+                        selected = state.soloAntennaDetectionMode == DetectionMode.ANY_PASS,
+                        onClick = { viewModel.updateSoloAntennaMode(DetectionMode.ANY_PASS) },
+                        label = { Text(if (strings.isSpanish) "Cualq. Paso" else "Any Pass") },
+                        colors = mxChipColors()
+                    )
+                    FilterChip(
+                        selected = state.soloAntennaDetectionMode == DetectionMode.FAIRING_COLOR,
+                        onClick = { viewModel.updateSoloAntennaMode(DetectionMode.FAIRING_COLOR) },
+                        label = { Text("Multi-Color") },
+                        colors = mxChipColors()
+                    )
+                    FilterChip(
+                        selected = state.soloAntennaDetectionMode == DetectionMode.SINGLE_COLOR,
+                        onClick = { viewModel.updateSoloAntennaMode(DetectionMode.SINGLE_COLOR) },
+                        label = { Text(if (strings.isSpanish) "1 Color" else "1 Color") },
+                        colors = mxChipColors()
+                    )
+                }
                 Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
                     RoiSize.entries.forEach { sz ->
                         FilterChip(

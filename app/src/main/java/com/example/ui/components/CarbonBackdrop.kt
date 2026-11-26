@@ -8,6 +8,7 @@ import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Box
@@ -24,6 +25,7 @@ import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.geometry.Offset
@@ -32,8 +34,11 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.Shape
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import com.example.R
 import com.example.ui.theme.CarbonVoid
 import com.example.ui.theme.LocalMxColors
 import com.example.ui.theme.SunCanvas
@@ -92,26 +97,58 @@ fun CarbonStadiumBackdrop(
             .fillMaxSize()
             .background(if (mxColors.isSunMode) SunCanvas else CarbonVoid)
     ) {
+        // Illustrated Night Motocross Stadium Track Background (visible behind dark veil for legibility)
+        Image(
+            painter = painterResource(id = R.drawable.img_mx_stadium_backdrop),
+            contentDescription = null,
+            contentScale = ContentScale.Crop,
+            modifier = Modifier
+                .fillMaxSize()
+                .alpha(if (mxColors.isSunMode) 0.18f else 0.78f)
+        )
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(
+                    if (mxColors.isSunMode) {
+                        Brush.verticalGradient(
+                            colors = listOf(
+                                SunCanvas.copy(alpha = 0.84f),
+                                SunCanvas.copy(alpha = 0.78f),
+                                SunCanvas.copy(alpha = 0.88f)
+                            )
+                        )
+                    } else {
+                        Brush.verticalGradient(
+                            colors = listOf(
+                                CarbonVoid.copy(alpha = 0.56f),
+                                CarbonVoid.copy(alpha = 0.46f),
+                                CarbonVoid.copy(alpha = 0.68f)
+                            )
+                        )
+                    }
+                )
+        )
         Canvas(modifier = Modifier.fillMaxSize()) {
             val w = size.width
             val h = size.height
             if (!mxColors.isSunMode) {
-                // 1. Diagonal carbon-fiber weave + racing telemetry sub-grid
-                val step = 24f
+                // 1. Subtle racing telemetry micro-grid blended over the track artwork
+                val step = 28f
                 val weaveColorA = Color(0xFF151C29)
-                val weaveColorB = Color(0xFF0C1018)
                 var y = 0f
                 var row = 0
                 while (y < h) {
                     var x = 0f
                     var col = 0
                     while (x < w) {
-                        val c = if ((row + col) % 2 == 0) weaveColorA else weaveColorB
-                        drawRect(
-                            color = c.copy(alpha = 0.55f),
-                            topLeft = Offset(x, y),
-                            size = Size(step * 0.86f, step * 0.86f)
-                        )
+                        if ((row + col) % 2 == 0) {
+                            drawRect(
+                                color = weaveColorA.copy(alpha = 0.14f),
+                                topLeft = Offset(x, y),
+                                size = Size(step * 0.85f, step * 0.85f)
+                            )
+                        }
                         x += step
                         col++
                     }

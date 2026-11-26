@@ -2,6 +2,8 @@ package com.example.ui.screens
 
 import android.Manifest
 import android.content.pm.PackageManager
+import android.os.Build
+import android.os.SystemClock
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.Canvas
@@ -35,7 +37,10 @@ import androidx.compose.material.icons.filled.Flag
 import androidx.compose.material.icons.filled.GpsFixed
 import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.SportsMotorsports
 import androidx.compose.material.icons.filled.Stop
+import androidx.compose.material.icons.filled.Timer
+import androidx.compose.material.icons.filled.TouchApp
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.CheckboxDefaults
 import androidx.compose.material3.FilterChip
@@ -95,6 +100,7 @@ import com.example.ui.components.GlassRaceCard
 import com.example.ui.components.Mx3dButton
 import com.example.ui.components.Mx3dOutlinedButton
 import com.example.ui.components.MxTopHeader
+import com.example.ui.components.PocketModeOverlay
 import com.example.ui.components.PulsingLiveDot
 import com.example.ui.components.RiderDorsalBadge
 import com.example.ui.components.SupercrossStartGateCard
@@ -104,6 +110,7 @@ import com.example.ui.theme.mxChipColors
 import com.example.ui.theme.mxTextFieldColors
 import com.example.ui.viewmodel.MxProViewModel
 import com.example.ui.viewmodel.MxUiState
+import kotlin.math.abs
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 
@@ -112,14 +119,19 @@ fun DirectorScreen(
     state: MxUiState,
     strings: MxStrings,
     viewModel: MxProViewModel,
-    onBack: () -> Unit
+    onBack: () -> Unit,
+    onNavigatePilot: () -> Unit = {}
 ) {
     val mx = LocalMxColors.current
     val context = LocalContext.current
     var selectedTab by remember { mutableIntStateOf(0) }
     var isTalkingPa by remember { mutableStateOf(false) }
+    var pocketMode by remember { mutableStateOf(false) }
 
     val audioPermLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) {}
+    val notifLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission()
     ) {}
 
@@ -195,6 +207,21 @@ fun DirectorScreen(
         return
     }
 
+    if (pocketMode) {
+        PocketModeOverlay(
+            titleLocked = strings.pocketModeLocked,
+            isSpanish = strings.isSpanish,
+            audioRoute = state.audioOutputRoute,
+            onSelectAudioRoute = { viewModel.setAudioOutputRoute(it) },
+            onUnlock = {
+                pocketMode = false
+                viewModel.setPocketModeAudioActive(false)
+            },
+            modifier = Modifier.fillMaxSize()
+        )
+        return
+    }
+
     var selectedAntennaId by remember { mutableStateOf(AntennaStation.ANTENA_1.id) }
 
     CarbonStadiumBackdrop {
@@ -216,51 +243,77 @@ fun DirectorScreen(
                     onTogglePaMute = { viewModel.togglePaAudioMute() }
                 )
 
-                // Live PA Walkie-Talkie Hold-to-Talk Bar
-                Box(
+                // Live PA Walkie-Talkie Hold-to-Talk Bar + Pocket Mode Button
+                Row(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(horizontal = 16.dp, vertical = 4.dp)
-                        .clip(RoundedCornerShape(14.dp))
-                        .background(if (isTalkingPa) mx.racingRed else mx.goldAccent.copy(alpha = 0.22f))
-                        .border(1.dp, if (isTalkingPa) mx.racingRed else mx.goldAccent, RoundedCornerShape(14.dp))
-                        .pointerInput(Unit) {
-                            detectTapGestures(
-                                onPress = {
-                                    val granted = ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) ==
-                                        PackageManager.PERMISSION_GRANTED
-                                    if (!granted) {
-                                        audioPermLauncher.launch(Manifest.permission.RECORD_AUDIO)
-                                        return@detectTapGestures
-                                    }
-                                    isTalkingPa = viewModel.voiceEngine.startPaRecording()
-                                    tryAwaitRelease()
-                                    if (isTalkingPa) {
-                                        isTalkingPa = false
-                                        val b64 = viewModel.voiceEngine.stopPaRecordingToBase64()
-                                        if (!b64.isNullOrBlank()) {
-                                            viewModel.broadcastPaAudioClip(b64)
+                        .padding(horizontal = 16.dp, vertical = 4.dp),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .weight(1f)
+                            .clip(RoundedCornerShape(14.dp))
+                            .background(if (isTalkingPa) mx.racingRed else mx.goldAccent.copy(alpha = 0.22f))
+                            .border(1.dp, if (isTalkingPa) mx.racingRed else mx.goldAccent, RoundedCornerShape(14.dp))
+                            .pointerInput(Unit) {
+                                detectTapGestures(
+                                    onPress = {
+                                        val granted = ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) ==
+                                            PackageManager.PERMISSION_GRANTED
+                                        if (!granted) {
+                                            audioPermLauncher.launch(Manifest.permission.RECORD_AUDIO)
+                                            return@detectTapGestures
+                                        }
+                                        isTalkingPa = viewModel.voiceEngine.startPaRecording()
+                                        tryAwaitRelease()
+                                        if (isTalkingPa) {
+                                            isTalkingPa = false
+                                            val b64 = viewModel.voiceEngine.stopPaRecordingToBase64()
+                                            if (!b64.isNullOrBlank()) {
+                                                viewModel.broadcastPaAudioClip(b64)
+                                            }
                                         }
                                     }
-                                }
+                                )
+                            }
+                            .padding(vertical = 10.dp)
+                            .testTag("director_pa_hold_button"),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Icon(
+                                Icons.Default.Mic,
+                                contentDescription = strings.paBroadcastHold,
+                                tint = if (isTalkingPa) Color.White else mx.goldAccent
+                            )
+                            Spacer(Modifier.width(6.dp))
+                            Text(
+                                text = if (isTalkingPa) "ON AIR..." else if (strings.isSpanish) "MANTENER PA" else "HOLD PA MIC",
+                                style = MaterialTheme.typography.labelLarge,
+                                color = if (isTalkingPa) Color.White else MaterialTheme.colorScheme.onBackground,
+                                maxLines = 1
                             )
                         }
-                        .padding(vertical = 10.dp)
-                        .testTag("director_pa_hold_button"),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Icon(
-                            Icons.Default.Mic,
-                            contentDescription = strings.paBroadcastHold,
-                            tint = if (isTalkingPa) Color.White else mx.goldAccent
-                        )
-                        Spacer(Modifier.width(8.dp))
-                        Text(
-                            text = if (isTalkingPa) "ON AIR..." else strings.paBroadcastHold,
-                            style = MaterialTheme.typography.labelLarge,
-                            color = if (isTalkingPa) Color.White else MaterialTheme.colorScheme.onBackground
-                        )
+                    }
+
+                    Mx3dOutlinedButton(
+                        onClick = {
+                            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+                                ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
+                            ) {
+                                notifLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+                            }
+                            viewModel.setPocketModeAudioActive(true)
+                            pocketMode = true
+                        },
+                        borderColor = mx.smBadge,
+                        modifier = Modifier.testTag("director_pocket_mode_button")
+                    ) {
+                        Icon(Icons.Default.Timer, contentDescription = null, modifier = Modifier.size(16.dp), tint = mx.smBadge)
+                        Spacer(Modifier.width(4.dp))
+                        Text(strings.pocketMode, maxLines = 1)
                     }
                 }
 
@@ -387,7 +440,7 @@ fun DirectorScreen(
                                     Tab(selected = selectedTab == 4, onClick = { selectedTab = 4 }, selectedContentColor = mx.goldAccent, unselectedContentColor = MaterialTheme.colorScheme.onSurface, text = { Text(strings.clubAdmin) })
                                 }
                                 when (selectedTab) {
-                                    0 -> DirectorRoomControlTab(state, strings, viewModel, liveNowMs, showInlineCamera = false, selectedAntennaId = selectedAntennaId, onSelectAntenna = { selectedAntennaId = it })
+                                    0 -> DirectorRoomControlTab(state, strings, viewModel, liveNowMs, showInlineCamera = false, selectedAntennaId = selectedAntennaId, onSelectAntenna = { selectedAntennaId = it }, onNavigatePilot = onNavigatePilot)
                                     1 -> DirectorAntennaMonitorTab(state, strings, viewModel, liveNowMs, selectedAntennaId) { selectedAntennaId = it }
                                     2 -> DirectorColorWarmupTab(state, strings, viewModel, liveNowMs)
                                     3 -> DirectorSetupWizardTab(strings)
@@ -410,7 +463,7 @@ fun DirectorScreen(
                                 Tab(selected = selectedTab == 4, onClick = { selectedTab = 4 }, selectedContentColor = mx.goldAccent, unselectedContentColor = MaterialTheme.colorScheme.onSurface, text = { Text(strings.clubAdmin) })
                             }
                             when (selectedTab) {
-                                0 -> DirectorRoomControlTab(state, strings, viewModel, liveNowMs, showInlineCamera = true, selectedAntennaId = selectedAntennaId, onSelectAntenna = { selectedAntennaId = it })
+                                0 -> DirectorRoomControlTab(state, strings, viewModel, liveNowMs, showInlineCamera = true, selectedAntennaId = selectedAntennaId, onSelectAntenna = { selectedAntennaId = it }, onNavigatePilot = onNavigatePilot)
                                 1 -> DirectorAntennaMonitorTab(state, strings, viewModel, liveNowMs, selectedAntennaId) { selectedAntennaId = it }
                                 2 -> DirectorColorWarmupTab(state, strings, viewModel, liveNowMs)
                                 3 -> DirectorSetupWizardTab(strings)
@@ -438,7 +491,8 @@ private fun DirectorRoomControlTab(
     liveNowMs: Long,
     showInlineCamera: Boolean,
     selectedAntennaId: String,
-    onSelectAntenna: (String) -> Unit
+    onSelectAntenna: (String) -> Unit,
+    onNavigatePilot: () -> Unit
 ) {
     val mx = LocalMxColors.current
     val room = state.roomState
@@ -461,6 +515,62 @@ private fun DirectorRoomControlTab(
             )
             AnimatedCheckeredRibbon()
         }
+
+        // Director also participates as Rider ("Director también es Piloto")
+        GlassRaceCard(accentBorder = mx.goldAccent.copy(alpha = 0.55f)) {
+            Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(Icons.Default.SportsMotorsports, contentDescription = null, tint = mx.goldAccent)
+                    Spacer(Modifier.width(6.dp))
+                    Text(
+                        if (strings.isSpanish) "Director en Pista (También soy Piloto)" else "Director Also Racing (Rider Mode)",
+                        style = MaterialTheme.typography.titleMedium,
+                        color = mx.goldAccent
+                    )
+                }
+                if (state.riders.isNotEmpty()) {
+                    LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        items(state.riders.take(12)) { r ->
+                            val selected = state.currentRider?.id == r.id
+                            FilterChip(
+                                selected = selected,
+                                onClick = { viewModel.directorJoinRoomAsPilot(r) },
+                                label = { Text(r.name) },
+                                colors = mxChipColors()
+                            )
+                        }
+                    }
+                }
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+                    Mx3dOutlinedButton(
+                        enabled = state.currentRider != null,
+                        onClick = { viewModel.recordManualLapForCurrentRider() },
+                        borderColor = mx.goldAccent,
+                        modifier = Modifier.weight(1f)
+                    ) {
+                        Icon(Icons.Default.TouchApp, contentDescription = null, modifier = Modifier.size(16.dp), tint = mx.goldAccent)
+                        Spacer(Modifier.width(4.dp))
+                        Text(
+                            state.currentRider?.let { "${strings.manualLap} (${it.name})" } ?: strings.manualLap,
+                            maxLines = 1
+                        )
+                    }
+                    Mx3dButton(
+                        enabled = state.currentRider != null,
+                        onClick = {
+                            viewModel.enterTrackAsLoggedRider()
+                            onNavigatePilot()
+                        },
+                        containerColor = mx.smBadge,
+                        contentColor = contrastTextOn(mx.smBadge),
+                        modifier = Modifier.weight(1f).testTag("director_jump_pilot_btn")
+                    ) {
+                        Text(if (strings.isSpanish) "Ir a Mi Sala Piloto" else "Open Rider Room", maxLines = 1)
+                    }
+                }
+            }
+        }
+
         SupercrossStartGateCard(
             sessionPhase = room.sessionPhase,
             phaseEndTimeMs = room.phaseEndTimeMs,
@@ -714,12 +824,51 @@ private fun DirectorAntennaCameraPreviewCard(
     val mx = LocalMxColors.current
     val cfg = state.antennas[selectedAntennaId]
         ?: AntennaConfig(antennaId = selectedAntennaId, circuitId = state.activeCircuit.id)
-    val ant1Online = (state.antennas[AntennaStation.ANTENA_1.id]?.lastHeartbeatMs ?: 0L) > liveNowMs - 15_000L
-    val ant2Online = (state.antennas[AntennaStation.ANTENA_2.id]?.lastHeartbeatMs ?: 0L) > liveNowMs - 15_000L
-    val tempOnline = (state.antennas[AntennaStation.ANTENA_TEMP.id]?.lastHeartbeatMs ?: 0L) > liveNowMs - 15_000L
-    val selectedOnline = cfg.lastHeartbeatMs > liveNowMs - 15_000L
+    val nowMono = SystemClock.elapsedRealtime()
+    fun checkLive(antId: String): Boolean {
+        val c = state.antennas[antId]
+        val hbOk = c != null && c.lastHeartbeatMs > 0L && abs(liveNowMs - c.lastHeartbeatMs) < 35_000L
+        val monoOk = (nowMono - (state.antennaLastChangeMonoMs[antId] ?: 0L)) in 0L..25_000L
+        return hbOk || monoOk
+    }
+    val ant1Online = checkLive(AntennaStation.ANTENA_1.id)
+    val ant2Online = checkLive(AntennaStation.ANTENA_2.id)
+    val tempOnline = checkLive(AntennaStation.ANTENA_TEMP.id)
+    val selectedOnline = checkLive(selectedAntennaId)
 
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        state.otherCircuitOnlineAntenna?.let { (otherCircId, otherAntId) ->
+            val targetCirc = state.circuits.firstOrNull { it.id == otherCircId }
+            GlassRaceCard(accentBorder = mx.goldAccent) {
+                Row(
+                    modifier = Modifier.fillMaxWidth().padding(10.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = if (strings.isSpanish) {
+                            "Antena '$otherAntId' detectada en circuito: ${targetCirc?.name ?: otherCircId}"
+                        } else {
+                            "Antenna '$otherAntId' active on circuit: ${targetCirc?.name ?: otherCircId}"
+                        },
+                        style = MaterialTheme.typography.labelMedium,
+                        color = mx.goldBright,
+                        modifier = Modifier.weight(1f)
+                    )
+                    if (targetCirc != null) {
+                        Spacer(Modifier.width(8.dp))
+                        Mx3dButton(
+                            onClick = { viewModel.selectCircuit(targetCirc) },
+                            containerColor = mx.goldAccent,
+                            contentColor = contrastTextOn(mx.goldAccent)
+                        ) {
+                            Text(if (strings.isSpanish) "Cambiar" else "Switch", maxLines = 1)
+                        }
+                    }
+                }
+            }
+        }
+
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.SpaceBetween,
@@ -771,14 +920,15 @@ private fun DirectorAntennaCameraPreviewCard(
                         color = mx.goldAccent
                     )
                     val secAgo = if (cfg.lastHeartbeatMs > 0L) ((liveNowMs - cfg.lastHeartbeatMs) / 1000L).coerceAtLeast(0L) else -1L
+                    val calText = if (cfg.isCalibrated) (if (strings.isSpanish) "CALIBRADA" else "CALIBRATED") else (if (strings.isSpanish) "SIN CALIBRAR" else "UNCALIBRATED")
                     Text(
                         text = if (selectedOnline) {
-                            if (strings.isSpanish) "CONECTADA (${secAgo}s)" else "ONLINE (${secAgo}s)"
+                            if (strings.isSpanish) "CONECTADA (${secAgo}s) • $calText" else "ONLINE (${secAgo}s) • $calText"
                         } else {
                             if (strings.isSpanish) "SIN SEÑAL" else "OFFLINE"
                         },
                         style = MaterialTheme.typography.labelSmall,
-                        color = if (selectedOnline) mx.telemetryGreen else mx.racingRed,
+                        color = if (selectedOnline) (if (cfg.isCalibrated) mx.telemetryGreen else mx.goldBright) else mx.racingRed,
                         fontWeight = FontWeight.Bold
                     )
                 }

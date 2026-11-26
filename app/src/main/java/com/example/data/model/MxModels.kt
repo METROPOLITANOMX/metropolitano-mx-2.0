@@ -385,19 +385,44 @@ data class CheerMessage(
     val timestampMs: Long = 0L
 )
 
+object MxConstants {
+    /**
+     * Correo oficial del circuito fijado de forma inmutable en el código compilado
+     * (no visible ni modificable desde la app ni desde Dirección).
+     */
+    const val OFFICIAL_CLUB_EMAIL = "circuito@metropolitanomx.es"
+    const val DEFAULT_APK_URL = "https://github.com/METROPOLITANOMX/metropolitano-mx-2.0/releases/latest"
+}
+
 @JsonClass(generateAdapter = true)
 data class AppReport(
     val id: String = "",
     val senderName: String = "",
     val type: String = "BUG",
     val message: String = "",
+    val circuitRequested: String = "",
     val timestampMs: Long = 0L
+)
+
+@JsonClass(generateAdapter = true)
+data class InviteDownloadCode(
+    val code: String = "",
+    val circuitName: String = "",
+    val note: String = "",
+    val promoteOfficial: Boolean = true,
+    val active: Boolean = true,
+    val redeemedCount: Int = 0,
+    val createdAtMs: Long = 0L
 )
 
 @JsonClass(generateAdapter = true)
 data class GlobalConfig(
     val registrationOpen: Boolean = true,
     val directorPasswordHash: String = sha256("MXPRO2026"),
+    val directorCustomPasswordSet: Boolean = false,
+    val apkDownloadLocked: Boolean = false,
+    val apkDownloadUrl: String = MxConstants.DEFAULT_APK_URL,
+    val accessCodes: Map<String, InviteDownloadCode> = emptyMap(),
     val visitCount: Int = 0,
     val lastVisits: List<String> = emptyList()
 )

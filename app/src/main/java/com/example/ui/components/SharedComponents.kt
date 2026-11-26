@@ -439,3 +439,100 @@ fun Base64ImageView(
         )
     }
 }
+
+/**
+ * Prevents Android screen lock/sleep while the composable is active (used on Antenna screens).
+ */
+@Composable
+fun KeepScreenOnEffect(enabled: Boolean = true) {
+    val context = LocalContext.current
+    androidx.compose.runtime.DisposableEffect(enabled, context) {
+        val window = (context as? android.app.Activity)?.window
+        if (enabled) {
+            window?.addFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        }
+        onDispose {
+            if (enabled) {
+                window?.clearFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+            }
+        }
+    }
+}
+
+@Composable
+fun PocketModeOverlay(
+    titleLocked: String,
+    isSpanish: Boolean,
+    audioRoute: com.example.engine.AudioOutputRoute,
+    onSelectAudioRoute: (com.example.engine.AudioOutputRoute) -> Unit,
+    onUnlock: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    androidx.activity.compose.BackHandler { onUnlock() }
+    Box(
+        modifier = modifier
+            .background(Color.Black)
+            .testTag("pocket_mode_overlay")
+    ) {
+        androidx.compose.foundation.layout.Column(
+            modifier = Modifier
+                .align(Alignment.Center)
+                .padding(24.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(14.dp)
+        ) {
+            Text(
+                text = "🔒",
+                style = MaterialTheme.typography.displaySmall
+            )
+            Text(
+                text = titleLocked,
+                color = Color(0xFF94A3B8),
+                style = MaterialTheme.typography.titleMedium,
+                textAlign = androidx.compose.ui.text.style.TextAlign.Center
+            )
+            Text(
+                text = if (isSpanish) {
+                    "Audio continuo activo aunque apagues pantalla\nSalida de audio:"
+                } else {
+                    "Continuous audio active even with screen off\nAudio output:"
+                },
+                color = Color(0xFF64748B),
+                style = MaterialTheme.typography.labelMedium,
+                textAlign = androidx.compose.ui.text.style.TextAlign.Center
+            )
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                val options = listOf(
+                    com.example.engine.AudioOutputRoute.AUTO to "Auto",
+                    com.example.engine.AudioOutputRoute.SPEAKER to (if (isSpanish) "Altavoz" else "Speaker"),
+                    com.example.engine.AudioOutputRoute.HEADSET to (if (isSpanish) "Cascos" else "Headset")
+                )
+                options.forEach { (route, label) ->
+                    val selected = audioRoute == route
+                    Box(
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(10.dp))
+                            .background(if (selected) Color(0xFFF5B731) else Color(0xFF1E293B))
+                            .clickable { onSelectAudioRoute(route) }
+                            .padding(horizontal = 12.dp, vertical = 8.dp)
+                    ) {
+                        Text(
+                            text = label,
+                            color = if (selected) Color.Black else Color(0xFFCBD5E1),
+                            style = MaterialTheme.typography.labelLarge
+                        )
+                    }
+                }
+            }
+            Spacer(modifier = Modifier.size(12.dp))
+            Mx3dOutlinedButton(
+                onClick = onUnlock,
+                borderColor = Color(0xFF475569),
+                contentColor = Color(0xFFE2E8F0),
+                modifier = Modifier.width(220.dp)
+            ) {
+                Text(if (isSpanish) "Salir de Modo Bolsillo" else "Unlock Pocket Mode")
+            }
+        }
+    }
+}

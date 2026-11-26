@@ -2,6 +2,8 @@ package com.example.engine
 
 import android.content.Context
 import android.media.AudioAttributes
+import android.media.AudioDeviceInfo
+import android.media.AudioFocusRequest
 import android.media.AudioFormat
 import android.media.AudioManager
 import android.media.AudioTrack
@@ -9,6 +11,7 @@ import android.media.MediaPlayer
 import android.media.MediaRecorder
 import android.media.ToneGenerator
 import android.os.Build
+import android.os.Bundle
 import android.speech.tts.TextToSpeech
 import android.util.Base64
 import java.io.File
@@ -17,11 +20,16 @@ import kotlin.math.PI
 import kotlin.math.sin
 import kotlin.random.Random
 
+enum class AudioOutputRoute { AUTO, SPEAKER, HEADSET }
+
 class VoiceAndAudioEngine(private val context: Context) {
 
     private var tts: TextToSpeech? = null
     private var ttsReady = false
     private var currentSpanish = Locale.getDefault().language.startsWith("es", ignoreCase = true)
+    private var currentRoute = AudioOutputRoute.AUTO
+
+    private val audioManager = context.getSystemService(Context.AUDIO_SERVICE) as? AudioManager
 
     private var recorder: MediaRecorder? = null
     private var currentRecordFile: File? = null
@@ -31,6 +39,12 @@ class VoiceAndAudioEngine(private val context: Context) {
         tts = TextToSpeech(context.applicationContext) { status ->
             if (status == TextToSpeech.SUCCESS) {
                 ttsReady = true
+                tts?.setAudioAttributes(
+                    AudioAttributes.Builder()
+                        .setUsage(AudioAttributes.USAGE_MEDIA)
+                        .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
+                        .build()
+                )
                 applyLocale(currentSpanish)
             }
         }
@@ -43,15 +57,90 @@ class VoiceAndAudioEngine(private val context: Context) {
         }
     }
 
+    fun setOutputRoute(route: AudioOutputRoute) {
+        currentRoute = route
+        applyHardwareAudioRoute()
+    }
+
+    private fun applyHardwareAudioRoute() {
+        val am = audioManager ?: return
+        try {
+            when (currentRoute) {
+                AudioOutputRoute.AUTO -> {
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                        am.clearCommunicationDevice()
+                    }
+                    am.mode = AudioManager.MODE_NORMAL
+                    @Suppress("DEPRECATION")
+                    am.isSpeakerphoneOn = false
+                }
+                AudioOutputRoute.SPEAKER -> {
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                        val spk = am.availableCommunicationDevices.firstOrNull {
+                            it.type == AudioDeviceInfo.TYPE_BUILTIN_SPEAKER
+                        }
+                        if (spk != null) am.setCommunicationDevice(spk)
+                    } else {
+                        am.mode = AudioManager.MODE_IN_COMMUNICATION
+                        @Suppress("DEPRECATION")
+                        am.isSpeakerphoneOn = true
+                    }
+                }
+                AudioOutputRoute.HEADSET -> {
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                        val hs = am.availableCommunicationDevices.firstOrNull { dev ->
+                            dev.type == AudioDeviceInfo.TYPE_BLUETOOTH_A2DP ||
+                                dev.type == AudioDeviceInfo.TYPE_BLUETOOTH_SCO ||
+                                dev.type == AudioDeviceInfo.TYPE_BLE_HEADSET ||
+                                dev.type == AudioDeviceInfo.TYPE_WIRED_HEADSET ||
+                                dev.type == AudioDeviceInfo.TYPE_WIRED_HEADPHONES ||
+                                dev.type == AudioDeviceInfo.TYPE_USB_HEADSET
+                        }
+                        if (hs != null) am.setCommunicationDevice(hs) else am.clearCommunicationDevice()
+                    } else {
+                        am.mode = AudioManager.MODE_NORMAL
+                        @Suppress("DEPRECATION")
+                        am.isSpeakerphoneOn = false
+                    }
+                }
+            }
+        } catch (_: Exception) {
+        }
+    }
+
+    private fun requestTransientFocus() {
+        val am = audioManager ?: return
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                val req = AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN_TRANSIENT_MAY_DUCK)
+                    .setAudioAttributes(
+                        AudioAttributes.Builder()
+                            .setUsage(AudioAttributes.USAGE_MEDIA)
+                            .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
+                            .build()
+                    )
+                    .build()
+                am.requestAudioFocus(req)
+            }
+        } catch (_: Exception) {
+        }
+    }
+
     fun speak(text: String, flush: Boolean = true) {
         if (!ttsReady || text.isBlank()) return
+        applyHardwareAudioRoute()
+        requestTransientFocus()
         val mode = if (flush) TextToSpeech.QUEUE_FLUSH else TextToSpeech.QUEUE_ADD
-        tts?.speak(text, mode, null, "mx_${System.currentTimeMillis()}")
+        val params = Bundle().apply {
+            putInt(TextToSpeech.Engine.KEY_PARAM_STREAM, AudioManager.STREAM_MUSIC)
+        }
+        tts?.speak(text, mode, params, "mx_${System.currentTimeMillis()}")
     }
 
     fun playBeep(tone: Int = ToneGenerator.TONE_PROP_BEEP, durationMs: Int = 180) {
         try {
-            val tg = ToneGenerator(AudioManager.STREAM_MUSIC, 85)
+            applyHardwareAudioRoute()
+            val tg = ToneGenerator(AudioManager.STREAM_MUSIC, 88)
             tg.startTone(tone, durationMs)
         } catch (_: Exception) {
         }

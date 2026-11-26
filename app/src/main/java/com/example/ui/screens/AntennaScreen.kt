@@ -34,6 +34,7 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.VolumeOff
 import androidx.compose.material.icons.automirrored.filled.VolumeUp
 import androidx.compose.material.icons.filled.CameraAlt
+import androidx.compose.material.icons.filled.CenterFocusStrong
 import androidx.compose.material.icons.filled.SwapHoriz
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -51,6 +52,7 @@ import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -78,6 +80,7 @@ import com.example.i18n.MxStrings
 import com.example.ui.components.AnimatedCheckeredRibbon
 import com.example.ui.components.CarbonStadiumBackdrop
 import com.example.ui.components.GlassRaceCard
+import com.example.ui.components.KeepScreenOnEffect
 import com.example.ui.components.Mx3dButton
 import com.example.ui.components.Mx3dOutlinedButton
 import com.example.ui.theme.LocalMxColors
@@ -86,6 +89,7 @@ import com.example.ui.viewmodel.MxProViewModel
 import com.example.ui.viewmodel.MxUiState
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
+import kotlinx.coroutines.launch
 import java.util.concurrent.Executors
 import java.util.concurrent.atomic.AtomicLong
 
@@ -100,7 +104,10 @@ fun AntennaScreen(
     val lifecycleOwner = LocalLifecycleOwner.current
     val mx = LocalMxColors.current
 
+    val scope = rememberCoroutineScope()
     var stationChosen by remember { mutableStateOf(false) }
+    KeepScreenOnEffect(enabled = stationChosen)
+
     var hasCameraPerm by remember {
         mutableStateOf(
             ContextCompat.checkSelfPermission(context, Manifest.permission.CAMERA) ==
@@ -120,6 +127,7 @@ fun AntennaScreen(
     var lastFpsEstimate by remember { mutableIntStateOf(30) }
     var lastMatchConfidence by remember { mutableFloatStateOf(0f) }
     var localCalibrated by remember { mutableStateOf(false) }
+    var calibratingCountdown by remember { mutableIntStateOf(0) }
     var cameraError by remember { mutableStateOf<String?>(null) }
     var boundProvider by remember { mutableStateOf<ProcessCameraProvider?>(null) }
 
@@ -130,25 +138,26 @@ fun AntennaScreen(
     val latestProfiles by rememberUpdatedState(state.colorProfiles)
     val latestStation by rememberUpdatedState(state.selectedAntennaStation)
     val latestIsSpanish by rememberUpdatedState(strings.isSpanish)
+    val latestCalibrated by rememberUpdatedState(localCalibrated)
 
-    LaunchedEffect(activeConfig.calibrateCommandAtMs) {
-        if (activeConfig.calibrateCommandAtMs > lastHandledCalCmd && activeConfig.calibrateCommandAtMs > 0L) {
+    LaunchedEffect(stationChosen, activeConfig.calibrateCommandAtMs) {
+        if (stationChosen && activeConfig.calibrateCommandAtMs > lastHandledCalCmd && activeConfig.calibrateCommandAtMs > 0L) {
             lastHandledCalCmd = activeConfig.calibrateCommandAtMs
             visionEngine.requestLocalCalibration()
             localCalibrated = true
-            viewModel.sendAntennaHeartbeat(state.selectedAntennaStation, isCalibrated = true, status = "READY")
+            viewModel.calibrateAntennaLocally(state.selectedAntennaStation)
         }
     }
 
-    LaunchedEffect(stationChosen, state.selectedAntennaStation, localCalibrated) {
+    LaunchedEffect(stationChosen, state.selectedAntennaStation) {
         if (stationChosen) {
             while (isActive) {
                 viewModel.sendAntennaHeartbeat(
                     station = latestStation,
-                    isCalibrated = localCalibrated,
-                    status = if (localCalibrated) "READY" else "WAITING_CALIBRATION"
+                    isCalibrated = latestCalibrated,
+                    status = if (latestCalibrated) "ONLINE_READY" else "ONLINE_WAIT_CAL"
                 )
-                delay(4000L)
+                delay(3500L)
             }
         }
     }
@@ -259,7 +268,8 @@ fun AntennaScreen(
                                             viewModel.pushAntennaLiveSnapshot(
                                                 latestStation,
                                                 res.snapshotBase64,
-                                                res.estimatedFps
+                                                res.estimatedFps,
+                                                latestCalibrated
                                             )
                                         }
                                         if (res.triggered) {
@@ -396,7 +406,7 @@ fun AntennaScreen(
             }
         }
 
-        // Minimal remote-only HUD (No calibration sliders or adjusters on Antenna phone!)
+        // Top HUD: Connection Status + Sync Diagnostics + Local/Remote Controls
         Row(
             modifier = Modifier
                 .fillMaxWidth()
@@ -406,16 +416,18 @@ fun AntennaScreen(
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically
         ) {
-            GlassRaceCard {
+            GlassRaceCard(modifier = Modifier.weight(1f)) {
                 Column(modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp)) {
                     Text(
                         text = "${state.selectedAntennaStation.name} • ${state.activeCircuit.name}",
                         style = MaterialTheme.typography.titleMedium,
-                        color = mx.goldAccent
+                        color = mx.goldAccent,
+                        maxLines = 1
                     )
                     Text(
                         text = if (!localCalibrated) {
-                            if (strings.isSpanish) "Esperando Calibración de Dirección" else "Waiting for Director Calibration"
+                            if (strings.isSpanish) "CONECTADA • Falta calibrar (${lastFpsEstimate}fps)"
+                            else "ONLINE • Ready to calibrate (${lastFpsEstimate}fps)"
                         } else {
                             val modeLabel = when (activeConfig.detectionMode) {
                                 DetectionMode.FAIRING_COLOR -> "CIE Lab"
@@ -428,10 +440,22 @@ fun AntennaScreen(
                             "${if (strings.isSpanish) "LISTA" else "READY"} • ${lastFpsEstimate}fps • $modeLabel$dirLabel$aiLabel$dorsalPart"
                         },
                         style = MaterialTheme.typography.labelSmall,
-                        color = if (localCalibrated) mx.telemetryGreen else mx.racingRed
+                        color = if (localCalibrated) mx.telemetryGreen else mx.goldBright
+                    )
+                    Text(
+                        text = if (state.antennaSyncOk) {
+                            if (strings.isSpanish) "Nube OK • ${state.antennaUploadCount} envíos • Pantalla fija"
+                            else "Cloud OK • ${state.antennaUploadCount} syncs • Screen Awake"
+                        } else {
+                            "Error nube: ${state.antennaLastSyncError ?: "sin red"}"
+                        },
+                        style = MaterialTheme.typography.labelSmall,
+                        color = if (state.antennaSyncOk) mx.telemetryGreen else mx.racingRed
                     )
                 }
             }
+
+            Spacer(Modifier.width(6.dp))
 
             Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                 IconButton(
@@ -471,38 +495,81 @@ fun AntennaScreen(
             }
         }
 
-        // Bottom detected colors readout
-        if (lastDetectedColors.isNotEmpty()) {
-            GlassRaceCard(
-                modifier = Modifier
-                    .align(Alignment.BottomCenter)
-                    .navigationBarsPadding()
-                    .padding(14.dp)
-            ) {
-                Row(
-                    modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(10.dp)
-                ) {
-                    lastDetectedColors.forEach { sample ->
-                        val c = try { Color(android.graphics.Color.parseColor(sample.hex)) } catch (_: Exception) { Color.White }
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Box(
-                                modifier = Modifier
-                                    .size(16.dp)
-                                    .clip(CircleShape)
-                                    .background(c)
-                                    .border(1.dp, Color.White, CircleShape)
-                            )
-                            Spacer(Modifier.width(4.dp))
-                            Text(
-                                sample.colorName,
-                                style = MaterialTheme.typography.labelMedium,
-                                color = MaterialTheme.colorScheme.onSurface
-                            )
+        // Bottom local calibration & detected colors readout
+        Column(
+            modifier = Modifier
+                .align(Alignment.BottomCenter)
+                .fillMaxWidth()
+                .navigationBarsPadding()
+                .padding(14.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+            horizontalAlignment = Alignment.CenterHorizontally
+        ) {
+            if (lastDetectedColors.isNotEmpty()) {
+                GlassRaceCard {
+                    Row(
+                        modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        lastDetectedColors.forEach { sample ->
+                            val c = try { Color(android.graphics.Color.parseColor(sample.hex)) } catch (_: Exception) { Color.White }
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Box(
+                                    modifier = Modifier
+                                        .size(16.dp)
+                                        .clip(CircleShape)
+                                        .background(c)
+                                        .border(1.dp, Color.White, CircleShape)
+                                )
+                                Spacer(Modifier.width(4.dp))
+                                Text(
+                                    sample.colorName,
+                                    style = MaterialTheme.typography.labelMedium,
+                                    color = MaterialTheme.colorScheme.onSurface
+                                )
+                            }
                         }
                     }
                 }
+            }
+
+            val calBtnBg = if (localCalibrated) mx.telemetryGreen else mx.goldAccent
+            Mx3dButton(
+                onClick = {
+                    if (calibratingCountdown > 0) return@Mx3dButton
+                    scope.launch {
+                        for (s in 3 downTo 1) {
+                            calibratingCountdown = s
+                            if (state.antennaVoiceEnabled) viewModel.voiceEngine.speak(s.toString())
+                            delay(1000L)
+                        }
+                        calibratingCountdown = 0
+                        visionEngine.requestLocalCalibration()
+                        localCalibrated = true
+                        viewModel.calibrateAntennaLocally(state.selectedAntennaStation)
+                        if (state.antennaVoiceEnabled) {
+                            viewModel.voiceEngine.speak(
+                                if (strings.isSpanish) "Antena calibrada y lista" else "Antenna calibrated and ready"
+                            )
+                        }
+                    }
+                },
+                containerColor = calBtnBg,
+                contentColor = contrastTextOn(calBtnBg),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .testTag("antenna_local_calibrate_button")
+            ) {
+                Icon(Icons.Default.CenterFocusStrong, contentDescription = null)
+                Spacer(Modifier.width(8.dp))
+                Text(
+                    when {
+                        calibratingCountdown > 0 -> "${calibratingCountdown}s..."
+                        localCalibrated -> if (strings.isSpanish) "Recalibrar Aquí (3s)" else "Recalibrate Here (3s)"
+                        else -> if (strings.isSpanish) "Calibrar Aquí (3s) — O desde Dirección" else "Calibrate Here (3s) — Or from Director"
+                    }
+                )
             }
         }
     }

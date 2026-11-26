@@ -18,6 +18,10 @@ data class StoredPrefs(
     val rememberedPassword: String = "",
     val rememberMe: Boolean = true,
     val loggedInRiderId: String = "",
+    val rememberedDirectorPass: String = "",
+    val rememberDirectorPass: Boolean = true,
+    val installCodeUnlocked: Boolean = false,
+    val unlockedWithCode: String = "",
     val deviceId: String = "",
     val languageOverride: String? = null
 )
@@ -31,6 +35,10 @@ class UserPreferences(private val context: Context) {
         val REMEMBERED_NAME = stringPreferencesKey("remembered_name")
         val REMEMBERED_PASS = stringPreferencesKey("remembered_pass")
         val LOGGED_RIDER_ID = stringPreferencesKey("logged_rider_id")
+        val REMEMBER_DIR_PASS = booleanPreferencesKey("remember_dir_pass")
+        val REMEMBERED_DIR_PASS = stringPreferencesKey("remembered_dir_pass")
+        val INSTALL_CODE_UNLOCKED = booleanPreferencesKey("install_code_unlocked")
+        val UNLOCKED_WITH_CODE = stringPreferencesKey("unlocked_with_code")
         val DEVICE_ID = stringPreferencesKey("device_id")
         val LANG_OVERRIDE = stringPreferencesKey("lang_override")
     }
@@ -43,6 +51,10 @@ class UserPreferences(private val context: Context) {
             rememberedPassword = prefs[Keys.REMEMBERED_PASS] ?: "",
             rememberMe = prefs[Keys.REMEMBER_ME] ?: true,
             loggedInRiderId = prefs[Keys.LOGGED_RIDER_ID] ?: "",
+            rememberedDirectorPass = prefs[Keys.REMEMBERED_DIR_PASS] ?: "",
+            rememberDirectorPass = prefs[Keys.REMEMBER_DIR_PASS] ?: true,
+            installCodeUnlocked = prefs[Keys.INSTALL_CODE_UNLOCKED] ?: false,
+            unlockedWithCode = prefs[Keys.UNLOCKED_WITH_CODE] ?: "",
             deviceId = prefs[Keys.DEVICE_ID] ?: "",
             languageOverride = prefs[Keys.LANG_OVERRIDE]?.takeIf { it.isNotBlank() }
         )
@@ -93,6 +105,24 @@ class UserPreferences(private val context: Context) {
                 prefs.remove(Keys.REMEMBERED_NAME)
                 prefs.remove(Keys.REMEMBERED_PASS)
             }
+        }
+    }
+
+    suspend fun saveDirectorCreds(passwordPlain: String, remember: Boolean) {
+        context.dataStore.edit { prefs ->
+            prefs[Keys.REMEMBER_DIR_PASS] = remember
+            if (remember) {
+                prefs[Keys.REMEMBERED_DIR_PASS] = passwordPlain
+            } else {
+                prefs.remove(Keys.REMEMBERED_DIR_PASS)
+            }
+        }
+    }
+
+    suspend fun markInstallUnlocked(code: String) {
+        context.dataStore.edit { prefs ->
+            prefs[Keys.INSTALL_CODE_UNLOCKED] = true
+            prefs[Keys.UNLOCKED_WITH_CODE] = code
         }
     }
 

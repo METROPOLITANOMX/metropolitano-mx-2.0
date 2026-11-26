@@ -8,12 +8,14 @@ import com.example.data.model.BikeSetup
 import com.example.data.model.CapturedPassSample
 import com.example.data.model.Championship
 import com.example.data.model.Circuit
+import com.example.data.model.DetectionMode
 import com.example.data.model.FanInteractionState
 import com.example.data.model.GlobalConfig
 import com.example.data.model.LapRecord
 import com.example.data.model.RiderAccount
 import com.example.data.model.RiderColorProfile
 import com.example.data.model.RoomState
+import com.example.engine.AudioOutputRoute
 import com.example.engine.GeoStatus
 
 object MxRoutes {
@@ -41,10 +43,18 @@ data class MxUiState(
     val rememberedName: String = "",
     val rememberedPass: String = "",
     val rememberMe: Boolean = false,
+    val rememberedDirectorPass: String = "",
+    val rememberDirectorPass: Boolean = true,
+    val installCodeUnlocked: Boolean = false,
     val allBikes: List<BikeSetup> = emptyList(),
     val roomState: RoomState = RoomState(),
     val circuitLaps: List<LapRecord> = emptyList(),
     val antennas: Map<String, AntennaConfig> = emptyMap(),
+    val antennaLastChangeMonoMs: Map<String, Long> = emptyMap(),
+    val otherCircuitOnlineAntenna: Pair<String, String>? = null,
+    val antennaSyncOk: Boolean = true,
+    val antennaUploadCount: Int = 0,
+    val antennaLastSyncError: String? = null,
     val colorProfiles: List<RiderColorProfile> = emptyList(),
     val capturedPasses: List<CapturedPassSample> = emptyList(),
     val championships: List<Championship> = emptyList(),
@@ -55,6 +65,9 @@ data class MxUiState(
     val antennaVoiceEnabled: Boolean = true,
     val paAudioMuted: Boolean = false,
     val directorUnlocked: Boolean = false,
+    val soloAntennaDetectionMode: DetectionMode = DetectionMode.ANY_PASS,
+    val pocketAudioServiceRunning: Boolean = false,
+    val audioOutputRoute: AudioOutputRoute = AudioOutputRoute.AUTO,
     val activeRouletteChallenge: String? = null,
     val aiStewardBusy: Boolean = false,
     val aiStewardError: String? = null,

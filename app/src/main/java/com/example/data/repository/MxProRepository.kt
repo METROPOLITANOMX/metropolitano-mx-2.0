@@ -32,6 +32,7 @@ class MxProRepository(
     fun syncedNowMs(): Long = rtdb.syncedNowMs()
     fun lastSyncRttMs(): Long = rtdb.lastSyncRttMs
     fun isOnline(): Boolean = rtdb.isOnline
+    fun lastRtdbError(): String? = rtdb.lastNetworkError
     fun observeRoomEvents(circuitId: String) = rtdb.observePathEvents("rooms/$circuitId")
     fun observeAntennaEvents(circuitId: String) = rtdb.observePathEvents("antennas/$circuitId")
 
@@ -62,9 +63,9 @@ class MxProRepository(
         val cached = loadObjectCache<GlobalConfig>("global_config")
         if (remote != null && rtdb.isOnline) {
             val merged = if (cached != null && cached.visitCount > remote.visitCount) {
-                cached.copy(
-                    registrationOpen = remote.registrationOpen,
-                    directorPasswordHash = remote.directorPasswordHash
+                remote.copy(
+                    visitCount = cached.visitCount,
+                    lastVisits = cached.lastVisits.ifEmpty { remote.lastVisits }
                 )
             } else {
                 remote
@@ -185,6 +186,9 @@ class MxProRepository(
 
     suspend fun getAntennas(circuitId: String): Map<String, AntennaConfig> =
         rtdb.fetchAntennas(circuitId)
+
+    suspend fun getAllCircuitAntennas(): Map<String, Map<String, AntennaConfig>> =
+        rtdb.fetchAllCircuitAntennas()
 
     suspend fun saveAntennaConfig(config: AntennaConfig): Boolean =
         rtdb.saveAntennaConfig(config)
