@@ -1,0 +1,6 @@
+{
+  "name": "Metropolitano MX Pro",
+  "description": "RC 1/4 Motocross & Supermoto live lap timing, AI vision finish-line camera antenna, telemetry garage, race director console, and live spectator fan pit-board.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
