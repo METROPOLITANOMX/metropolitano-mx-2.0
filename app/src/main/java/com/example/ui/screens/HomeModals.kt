@@ -135,13 +135,25 @@ fun PilotAuthDialog(
                         items(activeRidersList.take(12)) { r ->
                             FilterChip(
                                 selected = name.equals(r.name, ignoreCase = true),
-                                onClick = { name = r.name },
+                                onClick = {
+                                    name = r.name
+                                    if (r.name.equals(state.rememberedName, ignoreCase = true) && state.rememberedPass.isNotBlank()) {
+                                        pass = state.rememberedPass
+                                    }
+                                },
                                 label = { Text(r.name) },
                                 colors = mxChipColors()
                             )
                         }
                     }
                     Spacer(Modifier.height(8.dp))
+                } else if (tabIndex == 0 && !state.isOnline) {
+                    Text(
+                        if (strings.isSpanish) "Sin conexión nube: puedes iniciar con tu última cuenta guardada en el dispositivo." else "Offline: sign in with your last account saved on this device.",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = mx.subtleText
+                    )
+                    Spacer(Modifier.height(6.dp))
                 }
 
                 OutlinedTextField(

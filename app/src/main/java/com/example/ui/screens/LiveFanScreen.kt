@@ -52,6 +52,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.data.model.ActiveRoomRider
 import com.example.data.model.AntennaStation
+import com.example.data.model.SessionPhase
 import com.example.data.model.SurfaceType
 import com.example.data.model.formatDeltaMs
 import com.example.data.model.formatLapMs
@@ -87,7 +88,6 @@ fun LiveFanScreen(
     var spyRider by remember { mutableStateOf<ActiveRoomRider?>(null) }
     var pitBoardRiderId by remember { mutableStateOf<String?>(null) }
     var fanName by remember { mutableStateOf(state.currentRider?.name ?: "Aficionado") }
-    var cheerInput by remember { mutableStateOf("") }
     var cheerTarget by remember { mutableStateOf("") }
 
     var liveNowMs by remember { mutableLongStateOf(viewModel.syncedNowMs()) }
@@ -113,7 +113,12 @@ fun LiveFanScreen(
     val pitRider = pitBoardRiderId?.let { id -> state.roomState.activeRiders[id] }
     if (pitRider != null) {
         val elapsedMs = if (pitRider.lastPassTimestampMs > 0L) (liveNowMs - pitRider.lastPassTimestampMs).coerceAtLeast(0L) else 0L
-        val lipoMin = if (pitRider.sessionStartMs > 0L) ((liveNowMs - pitRider.sessionStartMs) / 60_000L).toInt() else 0
+        val isPitRiding = pitRider.sessionStartMs > 0L && (
+            state.roomState.sessionPhase == SessionPhase.RACING ||
+                state.roomState.sessionPhase == SessionPhase.WARMUP ||
+                pitRider.lastPassTimestampMs > 0L
+            )
+        val lipoMin = if (isPitRiding) ((liveNowMs - pitRider.sessionStartMs) / 60_000L).toInt().coerceAtLeast(0) else 0
         val riderLaps = state.circuitLaps.filter { it.riderId == pitRider.riderId }
 
         BoxWithConstraints(
@@ -465,7 +470,38 @@ fun LiveFanScreen(
                     }
                 }
 
-                // Quick Cheer Messages (spoken via PA & pilot headsets)
+                // Predefined Moderated Cheer Messages (sounded on Pilots & PA)
+                val fanPresets = remember(state.currentRider?.name, strings.isSpanish) {
+                    buildList {
+                        state.currentRider?.name?.takeIf { it.isNotBlank() }?.let { add(it) }
+                        if (strings.isSpanish) {
+                            addAll(listOf("Aficionado", "Grada Sur", "Mecánico", "Paddock"))
+                        } else {
+                            addAll(listOf("MX Fan", "Grandstand", "Mechanic", "Paddock"))
+                        }
+                    }.distinct()
+                }
+                val cheerPresets = remember(strings.isSpanish) {
+                    if (strings.isSpanish) {
+                        listOf(
+                            "¡Gas a fondo con esa Promoto!",
+                            "¡Vaya plegada en el salto!",
+                            "¡A por la vuelta rápida!",
+                            "¡Fino con el giroscopio MS6X!",
+                            "¡Remontada épica desde atrás!",
+                            "¡Última vuelta al límite!"
+                        )
+                    } else {
+                        listOf(
+                            "Full throttle on that Promoto!",
+                            "Huge whip over the jump!",
+                            "Go for the fastest lap!",
+                            "Smooth on the MS6X gyro!",
+                            "Epic charge through the pack!",
+                            "Final lap on the edge!"
+                        )
+                    }
+                }
                 GlassRaceCard {
                     Column(modifier = Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                         Row(verticalAlignment = Alignment.CenterVertically) {
@@ -473,18 +509,67 @@ fun LiveFanScreen(
                             Spacer(Modifier.width(6.dp))
                             Text(strings.cheerMessage, style = MaterialTheme.typography.titleMedium)
                         }
-                        OutlinedTextField(value = fanName, onValueChange = { fanName = it }, label = { Text("Tu nombre / Your name") }, singleLine = true, colors = mxTextFieldColors(), modifier = Modifier.fillMaxWidth())
-                        OutlinedTextField(value = cheerTarget, onValueChange = { cheerTarget = it }, label = { Text("Piloto / Rider (opcional)") }, singleLine = true, colors = mxTextFieldColors(), modifier = Modifier.fillMaxWidth())
-                        OutlinedTextField(value = cheerInput, onValueChange = { cheerInput = it }, label = { Text("Mensaje / Cheer") }, singleLine = true, colors = mxTextFieldColors(), modifier = Modifier.fillMaxWidth())
-                        Mx3dButton(
-                            onClick = {
-                                viewModel.sendCheerMessage(fanName, cheerTarget, cheerInput)
-                                cheerInput = ""
-                            },
-                            containerColor = mx.smBadge,
-                            contentColor = contrastTextOn(mx.smBadge),
-                            modifier = Modifier.fillMaxWidth()
-                        ) { Text(if (strings.isSpanish) "Enviar a Megafonía" else "Send to PA") }
+                        Text(
+                            if (strings.isSpanish) "Ánimo instantáneo (suena en móviles de pilotos y megafonía):"
+                            else "Instant cheers (played on rider phones & stadium PA):",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = mx.subtleText
+                        )
+                        LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                            items(fanPresets) { alias ->
+                                FilterChip(
+                                    selected = fanName == alias,
+                                    onClick = { fanName = alias },
+                                    label = { Text(alias) },
+                                    colors = mxChipColors()
+                                )
+                            }
+                        }
+                        if (allLeaderboard.isNotEmpty()) {
+                            LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                item {
+                                    FilterChip(
+                                        selected = cheerTarget.isBlank(),
+                                        onClick = { cheerTarget = "" },
+                                        label = { Text(if (strings.isSpanish) "Toda la Pista" else "All Riders") },
+                                        colors = mxChipColors()
+                                    )
+                                }
+                                items(allLeaderboard) { r ->
+                                    FilterChip(
+                                        selected = cheerTarget == r.riderName,
+                                        onClick = { cheerTarget = r.riderName },
+                                        label = { Text("#${r.dorsal} ${r.riderName}") },
+                                        colors = mxChipColors()
+                                    )
+                                }
+                            }
+                        }
+                        Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                            cheerPresets.chunked(2).forEach { pair ->
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                ) {
+                                    pair.forEachIndexed { idx, presetText ->
+                                        Mx3dButton(
+                                            onClick = { viewModel.sendCheerMessage(fanName, cheerTarget, presetText) },
+                                            containerColor = if (idx == 0) mx.smBadge else mx.goldAccent,
+                                            contentColor = contrastTextOn(if (idx == 0) mx.smBadge else mx.goldAccent),
+                                            modifier = Modifier
+                                                .weight(1f)
+                                                .testTag("fan_preset_cheer_${cheerPresets.indexOf(presetText)}")
+                                        ) {
+                                            Text(
+                                                presetText,
+                                                style = MaterialTheme.typography.labelMedium,
+                                                maxLines = 2
+                                            )
+                                        }
+                                    }
+                                }
+                            }
+                        }
 
                         state.fanState.cheerMessages.take(4).forEach { msg ->
                             Text("📣 ${msg.fanName}: ${msg.text}", style = MaterialTheme.typography.bodyMedium, color = mx.goldBright)

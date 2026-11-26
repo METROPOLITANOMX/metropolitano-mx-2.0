@@ -78,6 +78,7 @@ data class MxUiState(
     val aiStewardBusy: Boolean = false,
     val aiStewardError: String? = null,
     val lastAiVerdict: AiStewardVerdict? = null,
+    val lastRtdbError: String? = null,
     val statusBannerMessage: String? = null,
     val lastBackupJson: String? = null
 ) {
@@ -86,9 +87,8 @@ data class MxUiState(
 
     val activeBike: BikeSetup?
         get() {
-            val mine = myBikes
-            val id = currentRider?.activeBikeId
-            return mine.firstOrNull { it.id == id } ?: mine.firstOrNull()
+            val id = currentRider?.activeBikeId?.takeIf { it.isNotBlank() } ?: return null
+            return myBikes.firstOrNull { it.id == id }
         }
 
     val paddockBikes: List<BikeSetup>

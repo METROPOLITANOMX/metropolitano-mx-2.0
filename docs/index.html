@@ -3,9 +3,12 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Metropolitano MX Pro — Descargar App Android</title>
+  <title>Metropolitano MX Pro — App Android y Acceso Directo PWA</title>
   <meta name="description" content="Cronometraje por visión artificial, telemetría en vivo, campeonatos MXGP y garaje Pro para motos RC Losi Promoto-MX y SM." />
-  <link rel="icon" type="image/png" href="https://raw.githubusercontent.com/metropolitanomx/metropolitano-mx-2.0/main/public/assets/aistudio/logo_992d847b.png" />
+  <meta name="theme-color" content="#f5b942" />
+  <link rel="manifest" href="./manifest.webmanifest" />
+  <link rel="icon" type="image/png" href="./icon-192.png" />
+  <link rel="apple-touch-icon" href="./icon-192.png" />
   <style>
     :root {
       --bg: #0b0d11;
@@ -64,6 +67,12 @@
       color: #111318; background: linear-gradient(135deg, #ffd166, #f5b942);
       box-shadow: 0 10px 28px rgba(245, 185, 66, 0.32);
     }
+    .btn-pwa {
+      display: inline-flex; align-items: center; justify-content: center; gap: 8px;
+      padding: 15px 22px; border-radius: 14px; font-size: 15px; font-weight: 800; cursor: pointer;
+      color: #071412; background: linear-gradient(135deg, #4ade80, #2ec4b6); border: none;
+      box-shadow: 0 10px 24px rgba(46, 196, 182, 0.28);
+    }
     .btn-secondary {
       display: inline-flex; align-items: center; justify-content: center; gap: 8px;
       padding: 15px 20px; border-radius: 14px; font-size: 14px; font-weight: 700; text-decoration: none;
@@ -71,6 +80,7 @@
     }
     .release-meta { font-size: 13px; color: var(--muted); min-height: 20px; }
     .release-meta strong { color: var(--green); }
+    .pwa-hint { font-size: 12.5px; color: var(--green); margin-top: 8px; }
     .notice {
       margin-top: 14px; padding: 12px 14px; border-radius: 12px;
       background: rgba(230, 57, 70, 0.12); border: 1px solid rgba(230, 57, 70, 0.35);
@@ -91,7 +101,7 @@
 <body>
   <main class="container">
     <div class="topbar">
-      <span class="badge">LOSI PROMOTO 1/4 • ANDROID APK</span>
+      <span class="badge">LOSI PROMOTO 1/4 • ANDROID APK + PWA</span>
       <button class="lang-btn" id="langToggle" type="button">EN / ES</button>
     </div>
 
@@ -99,17 +109,19 @@
       <img
         id="heroLogo"
         class="logo"
-        src="https://raw.githubusercontent.com/metropolitanomx/metropolitano-mx-2.0/main/public/assets/aistudio/logo_992d847b.png"
+        src="./icon-512.png"
         alt="Metropolitano MX Pro Logo"
-        onerror="this.style.display='none'"
+        onerror="this.src='https://raw.githubusercontent.com/metropolitanomx/metropolitano-mx-2.0/main/public/assets/aistudio/logo_992d847b.png'"
       />
       <h1>Metropolitano MX Pro</h1>
       <p class="subtitle" id="subtitleText"></p>
       <div class="cta-group">
         <a class="btn-primary" id="downloadBtn" href="#">⬇ <span id="downloadLabel"></span></a>
+        <button class="btn-pwa" id="installPwaBtn" type="button">📲 <span id="installPwaLabel"></span></button>
         <a class="btn-secondary" id="releasesBtn" href="#" target="_blank" rel="noopener"><span id="releasesLabel"></span></a>
       </div>
       <div class="release-meta" id="releaseMeta"></div>
+      <div class="pwa-hint" id="pwaHint"></div>
       <div class="notice" id="pendingNotice"></div>
     </section>
 
@@ -133,13 +145,22 @@
 
   <script>
     (function () {
+      if ("serviceWorker" in navigator) {
+        navigator.serviceWorker.register("./sw.js").catch(() => {});
+      }
+
+      let deferredPrompt = null;
+      const installPwaBtn = document.getElementById("installPwaBtn");
+      window.addEventListener("beforeinstallprompt", (e) => {
+        e.preventDefault();
+        deferredPrompt = e;
+      });
+
       const hostParts = window.location.hostname.split(".");
       const pathParts = window.location.pathname.split("/").filter(Boolean);
       const isGhPages = window.location.hostname.endsWith(".github.io") && hostParts.length >= 3 && pathParts.length >= 1;
       const owner = isGhPages ? hostParts[0] : "metropolitanomx";
       const repo = isGhPages ? pathParts[0] : "metropolitano-mx-2.0";
-
-      document.getElementById("heroLogo").src = `https://raw.githubusercontent.com/${owner}/${repo}/main/public/assets/aistudio/logo_992d847b.png`;
 
       const repoUrl = `https://github.com/${owner}/${repo}`;
       const releasesUrl = `${repoUrl}/releases`;
@@ -147,6 +168,7 @@
       const downloadBtn = document.getElementById("downloadBtn");
       const releaseMeta = document.getElementById("releaseMeta");
       const pendingNotice = document.getElementById("pendingNotice");
+      const pwaHint = document.getElementById("pwaHint");
 
       downloadBtn.href = `${releasesUrl}/latest/download/MetropolitanoMXPro.apk`;
       document.getElementById("releasesBtn").href = releasesUrl;
@@ -156,42 +178,46 @@
       let lang = (navigator.language || "es").toLowerCase().startsWith("es") ? "es" : "en";
       const copy = {
         es: {
-          subtitle: "Cronometraje oficial por cámara en línea de meta, modo Antena Solo para entrenar, campeonatos MXGP, modos de juego y telemetría en tiempo real con Firebase.",
+          subtitle: "Cronometraje oficial por cámara en línea de meta, modo Antena Solo para entrenar en cualquier descampado, parking o circuito, campeonatos MXGP y garaje Pro para Losi Promoto 1/4.",
           download: "Descargar APK Android",
+          installPwa: "Instalar Acceso Directo (Sin avisos)",
           releases: "Ver Releases / Versiones",
+          pwaHint: "Menú Chrome (⋮) → 'Instalar aplicación' / 'Crear acceso directo' instala este portal Web sin avisos. El APK completo usa cámara y Bluetooth nativo.",
           f1Title: "📸 Antena Cámara + Antena Solo",
           f1Body: "Usa teléfonos dedicados en meta o activa \"Mi Móvil como Antena\" desde tu perfil de piloto para publicar tus vueltas automáticamente.",
           f2Title: "🏆 Campeonatos y Modos",
           f2Body: "Puntuación MXGP por mangas, Duelo Metrónomo, Turbo Sprint 3 Vueltas, Caza al Líder, Bomba Reloj y Rey de la Pista.",
           f3Title: "⚡ Sincronización en Vivo",
           f3Body: "Todos los pilotos y aficionados conectados al mismo tiempo con compensación exacta de reloj del servidor Firebase.",
-          stepsTitle: "Cómo instalar la app en tu móvil Android",
+          stepsTitle: "Cómo instalar sin dudas (APK nativa vs Acceso Directo Chrome)",
           steps: [
-            "Pulsa <strong>Descargar APK Android</strong> para bajar el archivo <code>MetropolitanoMXPro.apk</code>.",
-            "Android/Chrome muestra el aviso estándar <em>'Es posible que el archivo sea dañino'</em> en cualquier APK descargada fuera de Google Play Store. Pulsa <strong>Descargar de todos modos</strong>.",
-            "Abre el archivo descargado desde Descargas y, si pregunta, activa <strong>Permitir instalar aplicaciones de esta fuente</strong>.",
-            "Abre <strong>MX Pro</strong>, crea tu cuenta de piloto y entra directamente a <strong>Sala Pista</strong>."
+            "<strong>Opción Web / Acceso Directo (⋮ en Chrome, sin aviso):</strong> Toca el botón verde o abre el menú de Chrome (<strong>⋮</strong> arriba a la derecha) y pulsa <strong>Instalar aplicación / Crear acceso directo</strong>. Ese método nunca muestra aviso de archivo dañino porque es un acceso PWA del navegador.",
+            "<strong>Opción APK Completa (Cámara 60fps, Vision Lab y Modo Bolsillo):</strong> Pulsa <strong>Descargar APK Android</strong>. En cualquier APK descargado fuera de Google Play Store, Android muestra siempre el aviso estándar <em>'Es posible que el archivo sea dañino'</em> — pulsa <strong>Descargar de todos modos</strong>.",
+            "Abre el APK en Descargas, permite <strong>Instalar aplicaciones desconocidas</strong> en tu navegador y toca <strong>Instalar</strong>.",
+            "Abre <strong>MX Pro</strong>, elige tu moto en Garaje Pro y entra a <strong>Sala Pista</strong>."
           ],
           checking: "Buscando última compilación...",
           ready: (tag, mb) => `Última versión lista: <strong>${tag}</strong> • ${mb} MB`,
           noRelease: `Aún no hay un APK publicado en Releases. Entra en <a href="${actionsUrl}" target="_blank" rel="noopener" style="color:#ffd166;font-weight:700;">GitHub Actions</a> para verificar que el workflow <strong>Build & Publish Android APK</strong> haya terminado.`
         },
         en: {
-          subtitle: "Camera-based finish-line lap timing, Solo Rider Phone-as-Antenna mode, MXGP championships, fun race modes, and real-time Firebase telemetry.",
+          subtitle: "Camera-based finish-line lap timing, Solo Rider Phone-as-Antenna mode for any parking lot, yard, or track, MXGP championships, and Losi Promoto 1/4 Pro Garage.",
           download: "Download Android APK",
+          installPwa: "Install Web Shortcut (No APK warning)",
           releases: "View Releases",
+          pwaHint: "Chrome menu (⋮) → 'Install app' / 'Add to Home screen' installs this web portal cleanly. Full APK enables native camera timing & pocket audio.",
           f1Title: "📸 Finish-Line & Solo Antenna",
           f1Body: "Use dedicated finish-line phones or enable \"My Phone as Antenna\" in your rider profile to auto-publish laps live.",
           f2Title: "🏆 Championships & Modes",
           f2Body: "MXGP heat standings, Consistency Duel, Turbo Sprint 3, Pursuit Hunter, Time Bomb, Elimination & King of Track.",
           f3Title: "⚡ Live Clock Sync",
           f3Body: "Riders and fans stay synced in real time with Firebase server clock offset compensation.",
-          stepsTitle: "How to install on Android",
+          stepsTitle: "How to install (Native APK vs Chrome 3-dot Shortcut)",
           steps: [
-            "Tap <strong>Download Android APK</strong> to download <code>MetropolitanoMXPro.apk</code>.",
-            "Android/Chrome displays a standard <em>'File might be harmful'</em> prompt for any APK outside Google Play Store. Tap <strong>Download anyway</strong>.",
-            "Open the downloaded file and allow <strong>Install unknown apps</strong> for your browser, then tap <strong>Install</strong>.",
-            "Launch <strong>MX Pro</strong>, create your rider account, and enter <strong>Track Room</strong> directly."
+            "<strong>Web Shortcut (Chrome ⋮ menu, zero warning):</strong> Tap the green button or open Chrome's top-right <strong>⋮</strong> menu → <strong>Install app / Add to Home screen</strong>. Browsers install Web Apps cleanly without harmful-file warnings.",
+            "<strong>Full Native APK (High-FPS Camera, Lab Color Vision, Pocket Audio):</strong> Tap <strong>Download Android APK</strong>. Android warns on all APKs outside Google Play Store ('File might be harmful') — tap <strong>Download anyway</strong>.",
+            "Open the downloaded APK, allow <strong>Install unknown apps</strong> for your browser, and tap <strong>Install</strong>.",
+            "Launch <strong>MX Pro</strong>, pick your bike in Pro Garage, and enter <strong>Track Room</strong>."
           ],
           checking: "Checking latest build...",
           ready: (tag, mb) => `Latest build ready: <strong>${tag}</strong> • ${mb} MB`,
@@ -205,7 +231,9 @@
         document.documentElement.lang = lang;
         document.getElementById("subtitleText").textContent = t.subtitle;
         document.getElementById("downloadLabel").textContent = t.download;
+        document.getElementById("installPwaLabel").textContent = t.installPwa;
         document.getElementById("releasesLabel").textContent = t.releases;
+        pwaHint.textContent = t.pwaHint;
         document.getElementById("f1Title").textContent = t.f1Title;
         document.getElementById("f1Body").textContent = t.f1Body;
         document.getElementById("f2Title").textContent = t.f2Title;
@@ -225,6 +253,17 @@
           releaseMeta.textContent = t.checking;
         }
       }
+
+      installPwaBtn.addEventListener("click", async () => {
+        if (deferredPrompt) {
+          deferredPrompt.prompt();
+          await deferredPrompt.userChoice;
+          deferredPrompt = null;
+        } else {
+          alert(copy[lang].pwaHint);
+        }
+      });
+
       document.getElementById("langToggle").addEventListener("click", () => {
         lang = lang === "es" ? "en" : "es";
         renderLang();

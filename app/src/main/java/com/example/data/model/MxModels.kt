@@ -447,9 +447,10 @@ data class GlobalConfig(
 
 @JsonClass(generateAdapter = true)
 data class GarageBackupPayload(
-    val version: Int = 1,
+    val version: Int = 2,
     val exportedAtMs: Long = 0L,
     val riderName: String = "",
+    val riderProfile: RiderAccount? = null,
     val bikes: List<BikeSetup> = emptyList()
 )
 

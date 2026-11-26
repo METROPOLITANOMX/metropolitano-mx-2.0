@@ -134,7 +134,7 @@ fun PilotGarageProTab(
                 items(bikes) { b ->
                     FilterChip(
                         selected = b.id == activeBike?.id,
-                        onClick = { viewModel.saveBikeSetup(b, setActive = true) },
+                        onClick = { viewModel.selectActiveBike(b.id) },
                         label = { Text("${b.modelName} #${b.dorsal}") },
                         colors = mxChipColors()
                     )
@@ -373,12 +373,12 @@ fun PilotGarageProTab(
             containerColor = MaterialTheme.colorScheme.surface,
             titleContentColor = MaterialTheme.colorScheme.onSurface,
             textContentColor = MaterialTheme.colorScheme.onSurface,
-            title = { Text(strings.restoreBackup, style = MaterialTheme.typography.titleLarge) },
+            title = { Text("${strings.restoreBackup} (Cuenta + Garaje)", style = MaterialTheme.typography.titleLarge) },
             text = {
                 OutlinedTextField(
                     value = backupText,
                     onValueChange = { backupText = it },
-                    label = { Text("JSON Backup") },
+                    label = { Text(if (strings.isSpanish) "Pega tu JSON de Cuenta + Motos" else "Paste Account + Garage JSON") },
                     minLines = 4,
                     colors = mxTextFieldColors()
                 )

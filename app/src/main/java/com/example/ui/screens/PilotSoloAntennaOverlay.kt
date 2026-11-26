@@ -61,6 +61,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -127,14 +128,14 @@ fun PilotSoloAntennaOverlay(
         ActivityResultContracts.RequestPermission()
     ) { granted -> hasCameraPerm = granted }
 
-    var roiSize by remember { mutableStateOf(RoiSize.M) }
-    var lineOrientation by remember { mutableStateOf(LineOrientation.VERTICAL) }
-    var colorZoneX by remember { mutableFloatStateOf(0.70f) }
-    var colorZoneY by remember { mutableFloatStateOf(0.50f) }
-    var calibrated by remember { mutableStateOf(false) }
+    var roiSize by rememberSaveable { mutableStateOf(RoiSize.M) }
+    var lineOrientation by rememberSaveable { mutableStateOf(LineOrientation.VERTICAL) }
+    var colorZoneX by rememberSaveable { mutableFloatStateOf(0.70f) }
+    var colorZoneY by rememberSaveable { mutableFloatStateOf(0.50f) }
+    var calibrated by rememberSaveable { mutableStateOf(false) }
     var calibratingCountdown by remember { mutableIntStateOf(0) }
     var lastMatchedLabel by remember { mutableStateOf("") }
-    var batterySaverBlackScreen by remember { mutableStateOf(false) }
+    var batterySaverBlackScreen by rememberSaveable { mutableStateOf(false) }
     var lastInteractionMonoMs by remember { mutableLongStateOf(SystemClock.elapsedRealtime()) }
 
     fun touchActivity() {
@@ -380,10 +381,12 @@ fun PilotSoloAntennaOverlay(
                                 color = mx.goldAccent,
                                 maxLines = 1
                             )
+                            val activeBikeLabel = state.activeBike?.let { "${it.modelName} #${it.dorsal}" }
+                                ?: (if (strings.isSpanish) "Sin moto elegida" else "No bike selected")
                             Text(
-                                text = "${roomRider?.lapsCount ?: 0} laps • Best ${formatLapMs(roomRider?.bestLapMs ?: 0L)}",
+                                text = "${roomRider?.lapsCount ?: 0} laps • Best ${formatLapMs(roomRider?.bestLapMs ?: 0L)} • $activeBikeLabel",
                                 style = MaterialTheme.typography.labelSmall,
-                                color = if (calibrated) mx.telemetryGreen else mx.goldBright
+                                color = if (state.activeBike == null) mx.racingRed else if (calibrated) mx.telemetryGreen else mx.goldBright
                             )
                         }
                     }
@@ -559,8 +562,10 @@ fun PilotSoloAntennaOverlay(
                             colors = mxChipColors()
                         )
                     }
-                    val btnBg = if (calibrated) mx.telemetryGreen else mx.goldAccent
+                    val canCalibrateSolo = state.activeBike != null
+                    val btnBg = if (!canCalibrateSolo) mx.racingRed else if (calibrated) mx.telemetryGreen else mx.goldAccent
                     Mx3dButton(
+                        enabled = canCalibrateSolo,
                         onClick = {
                             touchActivity()
                             scope.launch {
@@ -586,6 +591,7 @@ fun PilotSoloAntennaOverlay(
                         Spacer(Modifier.width(8.dp))
                         Text(
                             when {
+                                !canCalibrateSolo -> if (strings.isSpanish) "Elige Moto en Sala Pista primero" else "Select Bike in Track Room first"
                                 calibratingCountdown > 0 -> "${calibratingCountdown}s..."
                                 calibrated -> (if (strings.isSpanish) "Recalibrar Pista Vacía (3s)" else "Recalibrate Track (3s)")
                                 else -> (if (strings.isSpanish) "Calibrar Pista Vacía (3s)" else "Calibrate Empty Track (3s)")

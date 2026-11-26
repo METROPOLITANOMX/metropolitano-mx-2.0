@@ -1,0 +1,25 @@
+{
+  "name": "Metropolitano MX Pro",
+  "short_name": "MX Pro",
+  "description": "Cronometraje por cámara, telemetría en directo y garaje Pro para Losi Promoto 1/4 RC.",
+  "start_url": "./index.html",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#0b0d11",
+  "theme_color": "#f5b942",
+  "icons": [
+    {
+      "src": "./icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "./icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ]
+}

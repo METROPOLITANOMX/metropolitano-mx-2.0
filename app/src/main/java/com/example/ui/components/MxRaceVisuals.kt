@@ -157,19 +157,24 @@ fun PilotStartGateIlluminationOverlay(
         isRecentGreen
     if (!isActive) return
 
-    val remSec = if (phaseEndTimeMs > nowMs) {
-        ((phaseEndTimeMs - nowMs + 200L) / 1000L).toInt().coerceAtLeast(0)
+    val nominalEndMs = if (sessionPhase == SessionPhase.RANDOM_GATE && phaseStartTimeMs > 0L) {
+        phaseStartTimeMs + 30_000L
+    } else {
+        phaseEndTimeMs
+    }
+    val remSec = if (nominalEndMs > nowMs) {
+        ((nominalEndMs - nowMs + 200L) / 1000L).toInt().coerceAtLeast(0)
     } else 0
-    val isAmberStage = sessionPhase == SessionPhase.COUNTDOWN_30 && remSec > 20
+    val isRandomHoldWindow = sessionPhase == SessionPhase.RANDOM_GATE && remSec <= 2
+    val isAmberStage = (sessionPhase == SessionPhase.COUNTDOWN_30 || sessionPhase == SessionPhase.RANDOM_GATE) && remSec > 20
     val isDropped = sessionPhase == SessionPhase.RACING
 
     val litCount = when {
         isDropped -> 5
-        sessionPhase == SessionPhase.RANDOM_GATE -> 5
-        remSec <= 1 -> 5
-        remSec <= 3 -> 4
-        remSec <= 6 -> 3
-        remSec <= 10 -> 2
+        remSec <= 2 -> 5
+        remSec <= 5 -> 4
+        remSec <= 10 -> 3
+        remSec <= 15 -> 2
         remSec <= 20 -> 1
         else -> 0
     }
@@ -227,8 +232,9 @@ fun PilotStartGateIlluminationOverlay(
             Text(
                 text = when {
                     isDropped -> if (isSpanish) "¡SALIDA! ¡GAS!" else "START! GO!"
-                    sessionPhase == SessionPhase.RANDOM_GATE -> if (isSpanish) "ATENTOS A LA VALLA" else "WATCH THE GATE"
+                    isRandomHoldWindow -> if (isSpanish) "¡ATENTOS A LA VALLA!" else "WATCH THE GATE!"
                     isAmberStage -> if (isSpanish) "PILOTOS A PARRILLA" else "RIDERS TO THE GATE"
+                    sessionPhase == SessionPhase.RANDOM_GATE -> if (isSpanish) "VALLA MX ALEATORIA" else "RANDOM MX GATE"
                     else -> if (isSpanish) "SEMÁFORO DE SALIDA" else "START LIGHTS"
                 },
                 style = MaterialTheme.typography.headlineMedium,
@@ -255,12 +261,19 @@ fun PilotStartGateIlluminationOverlay(
                 }
             }
 
-            if (sessionPhase == SessionPhase.COUNTDOWN_30) {
+            if (sessionPhase == SessionPhase.COUNTDOWN_30 || (sessionPhase == SessionPhase.RANDOM_GATE && !isRandomHoldWindow)) {
                 Text(
                     text = "${remSec}s",
                     style = MaterialTheme.typography.displayLarge.copy(fontSize = 86.sp, lineHeight = 90.sp),
                     color = Color.White,
                     fontWeight = FontWeight.Black
+                )
+            } else if (isRandomHoldWindow) {
+                Text(
+                    text = if (isSpanish) "CAÍDA ALEATORIA..." else "RANDOM DROP...",
+                    style = MaterialTheme.typography.headlineSmall,
+                    color = Color.White.copy(alpha = 0.9f),
+                    fontWeight = FontWeight.Bold
                 )
             } else if (isDropped) {
                 Text(
@@ -289,7 +302,12 @@ fun SupercrossStartGateCard(
         isRecentGreen
     if (!show) return
 
-    val remSec = if (phaseEndTimeMs > nowMs) ((phaseEndTimeMs - nowMs) / 1000L).toInt().coerceAtLeast(0) else 0
+    val nominalEndMs = if (sessionPhase == SessionPhase.RANDOM_GATE && phaseStartTimeMs > 0L) {
+        phaseStartTimeMs + 30_000L
+    } else {
+        phaseEndTimeMs
+    }
+    val remSec = if (nominalEndMs > nowMs) ((nominalEndMs - nowMs + 200L) / 1000L).toInt().coerceAtLeast(0) else 0
     val isDropped = sessionPhase == SessionPhase.RACING
     val gateDropAnim by animateFloatAsState(
         targetValue = if (isDropped) 1f else 0f,
@@ -299,12 +317,11 @@ fun SupercrossStartGateCard(
 
     val litCount = when {
         isDropped -> 5
-        sessionPhase == SessionPhase.RANDOM_GATE -> 5
-        remSec <= 1 -> 5
-        remSec <= 3 -> 4
-        remSec <= 6 -> 3
-        remSec <= 10 -> 2
-        remSec <= 16 -> 1
+        remSec <= 2 -> 5
+        remSec <= 5 -> 4
+        remSec <= 10 -> 3
+        remSec <= 15 -> 2
+        remSec <= 20 -> 1
         else -> 0
     }
 
@@ -320,7 +337,8 @@ fun SupercrossStartGateCard(
             Text(
                 text = when {
                     isDropped -> if (isSpanish) "¡VALLA ABAJO — GAS A FONDO!" else "GATE DROP — FULL THROTTLE!"
-                    sessionPhase == SessionPhase.RANDOM_GATE -> if (isSpanish) "VALLA MX LISTA • ATENTOS AL VERDE" else "MX GATE ARMED • WATCH THE LIGHTS"
+                    sessionPhase == SessionPhase.RANDOM_GATE && remSec <= 2 -> if (isSpanish) "VALLA MX • ¡ATENTOS AL VERDE!" else "MX GATE • WATCH THE LIGHTS!"
+                    sessionPhase == SessionPhase.RANDOM_GATE -> if (isSpanish) "VALLA MX ALEATORIA • ${remSec}s" else "RANDOM MX GATE • ${remSec}s"
                     else -> if (isSpanish) "SEMÁFORO SUPERCROSS • ${remSec}s" else "SUPERCROSS START GATE • ${remSec}s"
                 },
                 style = MaterialTheme.typography.titleMedium,
@@ -334,6 +352,7 @@ fun SupercrossStartGateCard(
                     val lit = i <= litCount
                     val ledColor = when {
                         isDropped -> Color(0xFF22C55E)
+                        remSec > 20 -> Color(0xFFF59E0B)
                         lit -> Color(0xFFE63946)
                         else -> Color(0xFF27272A)
                     }

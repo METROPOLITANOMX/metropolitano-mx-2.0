@@ -533,6 +533,28 @@ fun DirectorClubAdminTab(
             .padding(16.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
+        val rtdbErr = state.lastRtdbError ?: state.antennaLastSyncError
+        if (rtdbErr?.contains("401") == true) {
+            GlassRaceCard(accentBorder = mx.racingRed) {
+                Column(modifier = Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Text(
+                        text = if (strings.isSpanish) "⚠ Error Nube Firebase RTDB (HTTP 401)" else "⚠ Firebase RTDB Cloud Error (HTTP 401)",
+                        style = MaterialTheme.typography.titleMedium,
+                        color = mx.racingRed,
+                        fontWeight = FontWeight.Bold
+                    )
+                    Text(
+                        text = if (strings.isSpanish) {
+                            "Las reglas públicas de prueba en Firebase Realtime Database han caducado o están bloqueadas. Abre Firebase Console -> Realtime Database -> Reglas y publica {\".read\": true, \".write\": true} para restaurar sincronización global de cuentas, antenas y live timing."
+                        } else {
+                            "Firebase Realtime Database test rules expired or denied access. Open Firebase Console -> Realtime Database -> Rules and publish {\".read\": true, \".write\": true} to restore global cloud sync."
+                        },
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = mx.subtleText
+                    )
+                }
+            }
+        }
         // 1. Registrations toggle
         GlassRaceCard {
             Row(

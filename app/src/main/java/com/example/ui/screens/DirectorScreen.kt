@@ -65,6 +65,7 @@ import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -127,9 +128,16 @@ fun DirectorScreen(
 ) {
     val mx = LocalMxColors.current
     val context = LocalContext.current
-    var selectedTab by remember { mutableIntStateOf(0) }
+    val showClubAdminTab = !state.installCodeUnlocked
+    var selectedTab by rememberSaveable { mutableIntStateOf(0) }
     var isTalkingPa by remember { mutableStateOf(false) }
-    var pocketMode by remember { mutableStateOf(false) }
+    var pocketMode by rememberSaveable { mutableStateOf(false) }
+
+    LaunchedEffect(state.installCodeUnlocked) {
+        if (state.installCodeUnlocked && selectedTab >= 4) {
+            selectedTab = 0
+        }
+    }
 
     val audioPermLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission()
@@ -162,16 +170,26 @@ fun DirectorScreen(
         state.roomState.lastPaAnnouncement.timestampMs
     } else 0L
 
-    // Fullscreen 30s Starting Lights overlay when active
-    if (state.roomState.sessionPhase == SessionPhase.COUNTDOWN_30 &&
+    // Fullscreen 30s Starting Lights overlay when active (COUNTDOWN_30 or RANDOM_GATE)
+    if ((state.roomState.sessionPhase == SessionPhase.COUNTDOWN_30 ||
+            state.roomState.sessionPhase == SessionPhase.RANDOM_GATE) &&
         state.roomState.phaseEndTimeMs > liveNowMs
     ) {
-        val remSec = ((state.roomState.phaseEndTimeMs - liveNowMs + 200L) / 1000L).toInt().coerceAtLeast(0)
+        val nominalEndMs = if (state.roomState.sessionPhase == SessionPhase.RANDOM_GATE &&
+            state.roomState.phaseStartTimeMs > 0L
+        ) {
+            state.roomState.phaseStartTimeMs + 30_000L
+        } else {
+            state.roomState.phaseEndTimeMs
+        }
+        val remSec = ((nominalEndMs - liveNowMs + 200L) / 1000L).toInt().coerceAtLeast(0)
+        val isRandomHold = state.roomState.sessionPhase == SessionPhase.RANDOM_GATE && remSec <= 2
+        val isAmberStage = remSec > 20
         val litCount = when {
-            remSec <= 1 -> 5
-            remSec <= 3 -> 4
-            remSec <= 6 -> 3
-            remSec <= 10 -> 2
+            remSec <= 2 -> 5
+            remSec <= 5 -> 4
+            remSec <= 10 -> 3
+            remSec <= 15 -> 2
             remSec <= 20 -> 1
             else -> 0
         }
@@ -184,18 +202,27 @@ fun DirectorScreen(
             Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(20.dp)) {
                 Row(horizontalArrangement = Arrangement.spacedBy(14.dp)) {
                     for (i in 1..5) {
+                        val ledColor = when {
+                            isAmberStage -> Color(0xFFF59E0B)
+                            i <= litCount -> Color(0xFFE63946)
+                            else -> Color(0xFF27272A)
+                        }
                         Box(
                             modifier = Modifier
                                 .size(48.dp)
                                 .clip(CircleShape)
-                                .background(if (i <= litCount) Color(0xFFE63946) else Color(0xFF27272A))
+                                .background(ledColor)
                                 .border(2.dp, Color.White.copy(alpha = 0.35f), CircleShape)
                         )
                     }
                 }
                 Text(
-                    text = "${remSec}s",
-                    style = MaterialTheme.typography.displayLarge.copy(fontSize = 84.sp),
+                    text = if (isRandomHold) {
+                        if (strings.isSpanish) "¡ATENTOS!" else "WATCH!"
+                    } else {
+                        "${remSec}s"
+                    },
+                    style = MaterialTheme.typography.displayLarge.copy(fontSize = if (isRandomHold) 56.sp else 84.sp),
                     color = Color.White
                 )
                 SupercrossStartGateCard(
@@ -235,7 +262,7 @@ fun DirectorScreen(
         return
     }
 
-    var selectedAntennaId by remember { mutableStateOf(AntennaStation.ANTENA_1.id) }
+    var selectedAntennaId by rememberSaveable { mutableStateOf(AntennaStation.ANTENA_1.id) }
 
     CarbonStadiumBackdrop {
         Box(modifier = Modifier.fillMaxSize()) {
@@ -490,47 +517,61 @@ fun DirectorScreen(
                                     }
                                 }
 
+                                val safeTab = selectedTab.coerceAtMost(if (showClubAdminTab) 4 else 3)
                                 ScrollableTabRow(
-                                    selectedTabIndex = selectedTab,
+                                    selectedTabIndex = safeTab,
                                     edgePadding = 4.dp,
                                     containerColor = MaterialTheme.colorScheme.surface,
                                     contentColor = mx.goldAccent
                                 ) {
-                                    Tab(selected = selectedTab == 0, onClick = { selectedTab = 0 }, selectedContentColor = mx.goldAccent, unselectedContentColor = MaterialTheme.colorScheme.onSurface, text = { Text(strings.roomAndHeats) })
-                                    Tab(selected = selectedTab == 1, onClick = { selectedTab = 1 }, selectedContentColor = mx.goldAccent, unselectedContentColor = MaterialTheme.colorScheme.onSurface, text = { Text(strings.antennaMonitor) })
-                                    Tab(selected = selectedTab == 2, onClick = { selectedTab = 2 }, selectedContentColor = mx.goldAccent, unselectedContentColor = MaterialTheme.colorScheme.onSurface, text = { Text(strings.colorWarmup) })
-                                    Tab(selected = selectedTab == 3, onClick = { selectedTab = 3 }, selectedContentColor = mx.goldAccent, unselectedContentColor = MaterialTheme.colorScheme.onSurface, text = { Text(strings.setupWizard) })
-                                    Tab(selected = selectedTab == 4, onClick = { selectedTab = 4 }, selectedContentColor = mx.goldAccent, unselectedContentColor = MaterialTheme.colorScheme.onSurface, text = { Text(strings.clubAdmin) })
+                                    Tab(selected = safeTab == 0, onClick = { selectedTab = 0 }, selectedContentColor = mx.goldAccent, unselectedContentColor = MaterialTheme.colorScheme.onSurface, text = { Text(strings.roomAndHeats) })
+                                    Tab(selected = safeTab == 1, onClick = { selectedTab = 1 }, selectedContentColor = mx.goldAccent, unselectedContentColor = MaterialTheme.colorScheme.onSurface, text = { Text(strings.antennaMonitor) })
+                                    Tab(selected = safeTab == 2, onClick = { selectedTab = 2 }, selectedContentColor = mx.goldAccent, unselectedContentColor = MaterialTheme.colorScheme.onSurface, text = { Text(strings.colorWarmup) })
+                                    Tab(selected = safeTab == 3, onClick = { selectedTab = 3 }, selectedContentColor = mx.goldAccent, unselectedContentColor = MaterialTheme.colorScheme.onSurface, text = { Text(strings.setupWizard) })
+                                    if (showClubAdminTab) {
+                                        Tab(selected = safeTab == 4, onClick = { selectedTab = 4 }, selectedContentColor = mx.goldAccent, unselectedContentColor = MaterialTheme.colorScheme.onSurface, text = { Text(strings.clubAdmin) })
+                                    }
                                 }
-                                when (selectedTab) {
+                                when (safeTab) {
                                     0 -> DirectorRoomControlTab(state, strings, viewModel, liveNowMs, showInlineCamera = false, selectedAntennaId = selectedAntennaId, onSelectAntenna = { selectedAntennaId = it }, onNavigatePilot = onNavigatePilot)
                                     1 -> DirectorAntennaMonitorTab(state, strings, viewModel, liveNowMs, selectedAntennaId) { selectedAntennaId = it }
                                     2 -> DirectorColorWarmupTab(state, strings, viewModel, liveNowMs)
                                     3 -> DirectorSetupWizardTab(strings)
-                                    else -> DirectorClubAdminTab(state, strings, viewModel)
+                                    else -> if (showClubAdminTab) {
+                                        DirectorClubAdminTab(state, strings, viewModel)
+                                    } else {
+                                        DirectorRoomControlTab(state, strings, viewModel, liveNowMs, showInlineCamera = false, selectedAntennaId = selectedAntennaId, onSelectAntenna = { selectedAntennaId = it }, onNavigatePilot = onNavigatePilot)
+                                    }
                                 }
                             }
                         }
                     } else {
+                        val safeTab = selectedTab.coerceAtMost(if (showClubAdminTab) 4 else 3)
                         Column(modifier = Modifier.fillMaxSize()) {
                             ScrollableTabRow(
-                                selectedTabIndex = selectedTab,
+                                selectedTabIndex = safeTab,
                                 edgePadding = 8.dp,
                                 containerColor = MaterialTheme.colorScheme.surface,
                                 contentColor = mx.goldAccent
                             ) {
-                                Tab(selected = selectedTab == 0, onClick = { selectedTab = 0 }, selectedContentColor = mx.goldAccent, unselectedContentColor = MaterialTheme.colorScheme.onSurface, text = { Text(strings.roomAndHeats) })
-                                Tab(selected = selectedTab == 1, onClick = { selectedTab = 1 }, selectedContentColor = mx.goldAccent, unselectedContentColor = MaterialTheme.colorScheme.onSurface, text = { Text(strings.antennaMonitor) })
-                                Tab(selected = selectedTab == 2, onClick = { selectedTab = 2 }, selectedContentColor = mx.goldAccent, unselectedContentColor = MaterialTheme.colorScheme.onSurface, text = { Text(strings.colorWarmup) })
-                                Tab(selected = selectedTab == 3, onClick = { selectedTab = 3 }, selectedContentColor = mx.goldAccent, unselectedContentColor = MaterialTheme.colorScheme.onSurface, text = { Text(strings.setupWizard) })
-                                Tab(selected = selectedTab == 4, onClick = { selectedTab = 4 }, selectedContentColor = mx.goldAccent, unselectedContentColor = MaterialTheme.colorScheme.onSurface, text = { Text(strings.clubAdmin) })
+                                Tab(selected = safeTab == 0, onClick = { selectedTab = 0 }, selectedContentColor = mx.goldAccent, unselectedContentColor = MaterialTheme.colorScheme.onSurface, text = { Text(strings.roomAndHeats) })
+                                Tab(selected = safeTab == 1, onClick = { selectedTab = 1 }, selectedContentColor = mx.goldAccent, unselectedContentColor = MaterialTheme.colorScheme.onSurface, text = { Text(strings.antennaMonitor) })
+                                Tab(selected = safeTab == 2, onClick = { selectedTab = 2 }, selectedContentColor = mx.goldAccent, unselectedContentColor = MaterialTheme.colorScheme.onSurface, text = { Text(strings.colorWarmup) })
+                                Tab(selected = safeTab == 3, onClick = { selectedTab = 3 }, selectedContentColor = mx.goldAccent, unselectedContentColor = MaterialTheme.colorScheme.onSurface, text = { Text(strings.setupWizard) })
+                                if (showClubAdminTab) {
+                                    Tab(selected = safeTab == 4, onClick = { selectedTab = 4 }, selectedContentColor = mx.goldAccent, unselectedContentColor = MaterialTheme.colorScheme.onSurface, text = { Text(strings.clubAdmin) })
+                                }
                             }
-                            when (selectedTab) {
+                            when (safeTab) {
                                 0 -> DirectorRoomControlTab(state, strings, viewModel, liveNowMs, showInlineCamera = true, selectedAntennaId = selectedAntennaId, onSelectAntenna = { selectedAntennaId = it }, onNavigatePilot = onNavigatePilot)
                                 1 -> DirectorAntennaMonitorTab(state, strings, viewModel, liveNowMs, selectedAntennaId) { selectedAntennaId = it }
                                 2 -> DirectorColorWarmupTab(state, strings, viewModel, liveNowMs)
                                 3 -> DirectorSetupWizardTab(strings)
-                                else -> DirectorClubAdminTab(state, strings, viewModel)
+                                else -> if (showClubAdminTab) {
+                                    DirectorClubAdminTab(state, strings, viewModel)
+                                } else {
+                                    DirectorRoomControlTab(state, strings, viewModel, liveNowMs, showInlineCamera = true, selectedAntennaId = selectedAntennaId, onSelectAntenna = { selectedAntennaId = it }, onNavigatePilot = onNavigatePilot)
+                                }
                             }
                         }
                     }
@@ -925,6 +966,28 @@ private fun DirectorAntennaCameraPreviewCard(
     val selectedOnline = checkLive(selectedAntennaId)
 
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        val rtdbErr = state.lastRtdbError ?: state.antennaLastSyncError
+        if (rtdbErr?.contains("401") == true) {
+            GlassRaceCard(accentBorder = mx.racingRed) {
+                Column(modifier = Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Text(
+                        text = if (strings.isSpanish) "⚠ Firebase RTDB bloqueado (HTTP 401)" else "⚠ Firebase RTDB blocked (HTTP 401)",
+                        style = MaterialTheme.typography.titleSmall,
+                        color = mx.racingRed,
+                        fontWeight = FontWeight.Bold
+                    )
+                    Text(
+                        text = if (strings.isSpanish) {
+                            "Las reglas de Firebase RTDB caducaron o exigen auth. Activa '.read': true / '.write': true en Firebase Console -> Realtime Database -> Reglas, o conecta Antena y Director en la misma red Wi-Fi / Hotspot."
+                        } else {
+                            "Firebase RTDB rules expired or blocked access. Enable '.read': true / '.write': true in Firebase Console -> Realtime Database -> Rules, or keep Antenna & Director on the same Wi-Fi/Hotspot."
+                        },
+                        style = MaterialTheme.typography.labelSmall,
+                        color = mx.subtleText
+                    )
+                }
+            }
+        }
         state.otherCircuitOnlineAntenna?.let { (otherCircId, otherAntId) ->
             val targetCirc = state.circuits.firstOrNull { it.id == otherCircId }
             GlassRaceCard(accentBorder = mx.goldAccent) {

@@ -44,6 +44,7 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Tab
 import androidx.compose.material3.TabRow
 import androidx.compose.material3.Text
+import androidx.compose.material.icons.filled.SportsMotorsports
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -51,6 +52,7 @@ import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -96,10 +98,10 @@ fun PilotScreen(
 ) {
     val mx = LocalMxColors.current
     val context = LocalContext.current
-    var selectedTab by remember { mutableIntStateOf(0) }
-    var transmitterMode by remember { mutableStateOf(false) }
-    var pocketMode by remember { mutableStateOf(false) }
-    var soloAntennaMode by remember { mutableStateOf(false) }
+    var selectedTab by rememberSaveable { mutableIntStateOf(0) }
+    var transmitterMode by rememberSaveable { mutableStateOf(false) }
+    var pocketMode by rememberSaveable { mutableStateOf(false) }
+    var soloAntennaMode by rememberSaveable { mutableStateOf(false) }
     var dismissedGreenForStartMs by remember { mutableLongStateOf(0L) }
 
     val notifLauncher = rememberLauncherForActivityResult(
@@ -189,6 +191,7 @@ fun PilotScreen(
                 }
                 Row(horizontalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.fillMaxWidth()) {
                     Mx3dButton(
+                        enabled = state.activeBike != null,
                         onClick = { viewModel.recordManualLapForCurrentRider() },
                         containerColor = mx.goldAccent,
                         contentColor = contrastTextOn(mx.goldAccent),
@@ -283,6 +286,7 @@ fun PilotScreen(
                             pocketMode = true
                         },
                         onEnableSoloAntennaMode = { soloAntennaMode = true },
+                        onOpenGarage = { selectedTab = 1 },
                         onLogout = {
                             viewModel.logoutRider()
                             onBack()
@@ -324,6 +328,7 @@ private fun PilotTrackRoomTab(
     onEnableTransmitterMode: () -> Unit,
     onEnablePocketMode: () -> Unit,
     onEnableSoloAntennaMode: () -> Unit,
+    onOpenGarage: () -> Unit,
     onLogout: () -> Unit
 ) {
     val mx = LocalMxColors.current
@@ -337,6 +342,7 @@ private fun PilotTrackRoomTab(
         ((nowMono - (state.antennaLastChangeMonoMs[AntennaStation.ANTENA_2.id] ?: 0L)) in 0L..25_000L)
     val rider = state.currentRider
     val roomRider = rider?.let { room.activeRiders[it.id] }
+    val hasActiveBike = state.activeBike != null
 
     Column(
         modifier = Modifier
@@ -346,6 +352,73 @@ private fun PilotTrackRoomTab(
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
         AnimatedCheckeredRibbon()
+        // Track Bike Selection (Mandatory before riding or launching heats)
+        GlassRaceCard(
+            accentBorder = if (hasActiveBike) mx.telemetryGreen.copy(alpha = 0.6f) else mx.racingRed
+        ) {
+            Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(
+                            Icons.Default.SportsMotorsports,
+                            contentDescription = null,
+                            tint = if (hasActiveBike) mx.telemetryGreen else mx.racingRed,
+                            modifier = Modifier.size(18.dp)
+                        )
+                        Spacer(Modifier.width(6.dp))
+                        Text(
+                            text = if (strings.isSpanish) "Moto Seleccionada para Pista" else "Active Track Bike",
+                            style = MaterialTheme.typography.titleMedium,
+                            color = if (hasActiveBike) mx.goldAccent else mx.racingRed
+                        )
+                    }
+                    state.activeBike?.let { b ->
+                        Text(
+                            text = "${b.modelName} #${b.dorsal}",
+                            style = MaterialTheme.typography.labelLarge,
+                            color = mx.telemetryGreen,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
+                }
+                if (state.myBikes.isNotEmpty()) {
+                    LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        items(state.myBikes) { b ->
+                            FilterChip(
+                                selected = b.id == state.activeBike?.id,
+                                onClick = { viewModel.selectActiveBike(b.id) },
+                                label = { Text("${b.modelName} #${b.dorsal}") },
+                                colors = mxChipColors(),
+                                modifier = Modifier.testTag("pilot_track_bike_chip_${b.id}")
+                            )
+                        }
+                    }
+                }
+                if (!hasActiveBike) {
+                    Text(
+                        text = if (strings.isSpanish) {
+                            "⚠ Obligatorio: selecciona una moto de tu Garaje Pro arriba (o créala si aún no tienes) para entrar a pista, usar antena solo o dar salida."
+                        } else {
+                            "⚠ Required: select or create a bike in Pro Garage before entering track, timing, or starting a heat."
+                        },
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = mx.racingRed
+                    )
+                    Mx3dButton(
+                        onClick = onOpenGarage,
+                        containerColor = mx.goldAccent,
+                        contentColor = contrastTextOn(mx.goldAccent),
+                        modifier = Modifier.fillMaxWidth().testTag("pilot_goto_garage_button")
+                    ) {
+                        Text(if (strings.isSpanish) "Elegir o Crear Moto en Garaje Pro" else "Choose / Create Bike in Pro Garage")
+                    }
+                }
+            }
+        }
         // Antennas + Track Status + Flag + Game Mode
         GlassRaceCard {
             Column(modifier = Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -380,10 +453,24 @@ private fun PilotTrackRoomTab(
                     style = MaterialTheme.typography.titleMedium,
                     color = mx.goldAccent
                 )
-                if (room.sessionPhase == SessionPhase.COUNTDOWN_30 && room.phaseEndTimeMs > liveNowMs) {
-                    val rem = ((room.phaseEndTimeMs - liveNowMs + 200L) / 1000L).coerceAtLeast(0L)
+                if ((room.sessionPhase == SessionPhase.COUNTDOWN_30 ||
+                        room.sessionPhase == SessionPhase.RANDOM_GATE) &&
+                    room.phaseEndTimeMs > liveNowMs
+                ) {
+                    val nominalEndMs = if (room.sessionPhase == SessionPhase.RANDOM_GATE &&
+                        room.phaseStartTimeMs > 0L
+                    ) {
+                        room.phaseStartTimeMs + 30_000L
+                    } else {
+                        room.phaseEndTimeMs
+                    }
+                    val rem = ((nominalEndMs - liveNowMs + 200L) / 1000L).coerceAtLeast(0L)
                     Text(
-                        text = if (strings.isSpanish) "SALIDA EN ${rem}s" else "GATE DROP IN ${rem}s",
+                        text = if (room.sessionPhase == SessionPhase.RANDOM_GATE && rem <= 2L) {
+                            if (strings.isSpanish) "¡ATENTOS A LA VALLA!" else "WATCH THE GATE!"
+                        } else {
+                            if (strings.isSpanish) "SALIDA EN ${rem}s" else "GATE DROP IN ${rem}s"
+                        },
                         style = MaterialTheme.typography.displayMedium,
                         color = mx.racingRed
                     )
@@ -479,8 +566,14 @@ private fun PilotTrackRoomTab(
                     style = MaterialTheme.typography.titleMedium,
                     color = mx.telemetryGreen
                 )
-                if (roomRider != null && roomRider.sessionStartMs > 0L) {
-                    val lipoMin = ((liveNowMs - roomRider.sessionStartMs) / 60_000L).toInt()
+                val chronoRunning = (roomRider?.lastPassTimestampMs ?: 0L) > 0L
+                val isActivelyRiding = roomRider != null && roomRider.sessionStartMs > 0L && (
+                    room.sessionPhase == SessionPhase.RACING ||
+                        room.sessionPhase == SessionPhase.WARMUP ||
+                        chronoRunning
+                    )
+                if (isActivelyRiding) {
+                    val lipoMin = ((liveNowMs - roomRider!!.sessionStartMs) / 60_000L).toInt().coerceAtLeast(0)
                     Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(top = 6.dp)) {
                         Icon(
                             Icons.Default.BatteryAlert,
@@ -497,12 +590,12 @@ private fun PilotTrackRoomTab(
                     }
                 }
                 Spacer(Modifier.height(12.dp))
-                val chronoRunning = (roomRider?.lastPassTimestampMs ?: 0L) > 0L
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
                     Mx3dButton(
+                        enabled = hasActiveBike,
                         onClick = { viewModel.recordManualLapForCurrentRider() },
                         containerColor = mx.goldAccent,
                         contentColor = contrastTextOn(mx.goldAccent),
@@ -563,6 +656,7 @@ private fun PilotTrackRoomTab(
         }
 
         Mx3dButton(
+            enabled = hasActiveBike,
             onClick = onEnableSoloAntennaMode,
             containerColor = mx.smBadge,
             contentColor = contrastTextOn(mx.smBadge),
@@ -659,36 +753,35 @@ private fun PilotTrackRoomTab(
                         )
                     }
                 }
+                val canLaunchFriendly = !lockedByActiveSession && hasActiveBike
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
                     Mx3dOutlinedButton(
-                        enabled = !lockedByActiveSession,
+                        enabled = canLaunchFriendly,
                         onClick = { viewModel.runFriendly10sCalibration() },
                         borderColor = mx.telemetryGreen,
                         modifier = Modifier.weight(1f)
                     ) { Text(strings.calibrate10s, maxLines = 1) }
                     Mx3dOutlinedButton(
-                        enabled = !lockedByActiveSession,
+                        enabled = canLaunchFriendly,
                         onClick = { viewModel.startFriendlyWarmup() },
                         borderColor = mx.goldAccent,
                         modifier = Modifier.weight(1f)
                     ) { Text(strings.startWarmup, maxLines = 1) }
                 }
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
-                    Mx3dOutlinedButton(
-                        enabled = !lockedByActiveSession,
-                        onClick = { viewModel.startFriendly30sGate() },
-                        borderColor = mx.racingRed,
-                        modifier = Modifier.weight(1f)
-                    ) { Text(strings.startLight30s, maxLines = 1) }
-                    Mx3dOutlinedButton(
-                        enabled = !lockedByActiveSession,
-                        onClick = { viewModel.startFriendlyRandomGate() },
-                        borderColor = mx.smBadge,
-                        modifier = Modifier.weight(1f)
-                    ) { Text(strings.randomGate, maxLines = 1) }
+                Mx3dOutlinedButton(
+                    enabled = canLaunchFriendly,
+                    onClick = { viewModel.startFriendlyRandomGate() },
+                    borderColor = mx.racingRed,
+                    modifier = Modifier.fillMaxWidth().testTag("friendly_random_gate_button")
+                ) {
+                    Text(
+                        if (strings.isSpanish) "Valla MX Aleatoria (30s → Caída sorpresa)"
+                        else "Random MX Gate (30s → Surprise Drop)",
+                        maxLines = 1
+                    )
                 }
                 Mx3dButton(
-                    enabled = !lockedByActiveSession,
+                    enabled = canLaunchFriendly,
                     onClick = { viewModel.startFriendlyDirectHeat(room.heatDurationSec) },
                     containerColor = mx.telemetryGreen,
                     contentColor = contrastTextOn(mx.telemetryGreen),

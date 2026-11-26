@@ -60,6 +60,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -115,8 +116,8 @@ fun AntennaScreen(
     val mx = LocalMxColors.current
 
     val scope = rememberCoroutineScope()
-    var stationChosen by remember { mutableStateOf(false) }
-    var batterySaverBlackScreen by remember { mutableStateOf(false) }
+    var stationChosen by rememberSaveable { mutableStateOf(false) }
+    var batterySaverBlackScreen by rememberSaveable { mutableStateOf(false) }
     var lastInteractionMonoMs by remember { mutableLongStateOf(SystemClock.elapsedRealtime()) }
 
     fun touchActivity() {
@@ -171,15 +172,15 @@ fun AntennaScreen(
     var lastDetectedColors by remember { mutableStateOf<List<LabSample>>(emptyList()) }
     var lastDorsalHint by remember { mutableStateOf("") }
     var lastFpsEstimate by remember { mutableIntStateOf(30) }
-    var localCalibrated by remember { mutableStateOf(false) }
+    var localCalibrated by rememberSaveable { mutableStateOf(false) }
     var calibratingCountdown by remember { mutableIntStateOf(0) }
     var cameraError by remember { mutableStateOf<String?>(null) }
     var boundProvider by remember { mutableStateOf<ProcessCameraProvider?>(null) }
 
     val remoteConfig = state.antennas[state.selectedAntennaStation.id]
         ?: AntennaConfig(antennaId = state.selectedAntennaStation.id, circuitId = state.activeCircuit.id)
-    var localColorZoneX by remember(state.selectedAntennaStation.id) { mutableFloatStateOf(remoteConfig.colorZoneX) }
-    var localColorZoneY by remember(state.selectedAntennaStation.id) { mutableFloatStateOf(remoteConfig.colorZoneY) }
+    var localColorZoneX by rememberSaveable(state.selectedAntennaStation.id) { mutableFloatStateOf(remoteConfig.colorZoneX) }
+    var localColorZoneY by rememberSaveable(state.selectedAntennaStation.id) { mutableFloatStateOf(remoteConfig.colorZoneY) }
     LaunchedEffect(remoteConfig.colorZoneX, remoteConfig.colorZoneY) {
         localColorZoneX = remoteConfig.colorZoneX
         localColorZoneY = remoteConfig.colorZoneY
@@ -227,7 +228,10 @@ fun AntennaScreen(
 
     DisposableEffect(Unit) {
         onDispose {
-            viewModel.setAntennaRoleActive(false)
+            val isRotating = (context as? Activity)?.isChangingConfigurations == true
+            if (!isRotating) {
+                viewModel.setAntennaRoleActive(false)
+            }
             try {
                 boundProvider?.unbindAll()
             } catch (_: Exception) {
@@ -592,7 +596,7 @@ fun AntennaScreen(
                                 },
                                 style = MaterialTheme.typography.labelSmall,
                                 color = if (state.antennaSyncOk) mx.telemetryGreen else mx.racingRed,
-                                maxLines = 2
+                                maxLines = 3
                             )
                         }
                     }

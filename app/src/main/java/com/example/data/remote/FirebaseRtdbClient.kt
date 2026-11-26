@@ -42,6 +42,8 @@ class FirebaseRtdbClient {
     companion object {
         const val PRIMARY_BASE_URL = "https://app-servidor-9bb38-default-rtdb.europe-west1.firebasedatabase.app/mx_pro"
         const val SECONDARY_BASE_URL = "https://metropolitano-mx-circuit-default-rtdb.firebaseio.com/mx_pro"
+        const val TERTIARY_BASE_URL = "https://metropolitano-mx-circuit-default-rtdb.europe-west1.firebasedatabase.app/mx_pro"
+        val CANDIDATE_BASE_URLS = listOf(PRIMARY_BASE_URL, SECONDARY_BASE_URL, TERTIARY_BASE_URL)
         const val BASE_URL = PRIMARY_BASE_URL
         private const val TAG = "FirebaseRtdbClient"
         private val JSON_MEDIA = "application/json; charset=utf-8".toMediaType()
@@ -51,8 +53,13 @@ class FirebaseRtdbClient {
     var activeBaseUrl: String = PRIMARY_BASE_URL
         private set
 
-    private fun alternateBaseUrl(): String =
-        if (activeBaseUrl == PRIMARY_BASE_URL) SECONDARY_BASE_URL else PRIMARY_BASE_URL
+    private fun orderedCandidateUrls(): List<String> =
+        listOf(activeBaseUrl) + CANDIDATE_BASE_URLS.filter { it != activeBaseUrl }
+
+    private fun nextCandidateBaseUrl(): String {
+        val idx = CANDIDATE_BASE_URLS.indexOf(activeBaseUrl)
+        return CANDIDATE_BASE_URLS[(idx + 1) % CANDIDATE_BASE_URLS.size]
+    }
 
     private fun buildUrl(base: String, path: String): String {
         val clean = path.trimStart('/').split("/").joinToString("/") { android.net.Uri.encode(it) }
@@ -104,9 +111,9 @@ class FirebaseRtdbClient {
                 val wallBefore = System.currentTimeMillis()
                 val monoBefore = SystemClock.elapsedRealtime()
                 val body = """{"ts":{".sv":"timestamp"}}""".toRequestBody(JSON_MEDIA)
-                var url = buildUrl(activeBaseUrl, "_clock_sync/$dev")
-                var req = Request.Builder().url(url).put(body).build()
-                http.newCall(req).execute().use { resp ->
+                executeWithFailover { base ->
+                    Request.Builder().url(buildUrl(base, "_clock_sync/$dev")).put(body).build()
+                }.use { resp ->
                     val monoAfter = SystemClock.elapsedRealtime()
                     val rtt = (monoAfter - monoBefore).coerceAtLeast(0L)
                     val raw = resp.body?.string()
@@ -121,26 +128,12 @@ class FirebaseRtdbClient {
                                 bestOffset = offset
                             }
                         }
-                    } else if (resp.code == 401 || resp.code == 403 || resp.code == 404) {
-                        val alt = alternateBaseUrl()
-                        url = buildUrl(alt, "_clock_sync/$dev")
-                        req = Request.Builder().url(url).put("""{"ts":{".sv":"timestamp"}}""".toRequestBody(JSON_MEDIA)).build()
-                        http.newCall(req).execute().use { altResp ->
-                            val altRaw = altResp.body?.string()
-                            if (altResp.isSuccessful && !altRaw.isNullOrBlank()) {
-                                val sTs = JSONObject(altRaw).optLong("ts", 0L)
-                                if (sTs > 0L) {
-                                    activeBaseUrl = alt
-                                    anySuccess = true
-                                    bestOffset = sTs - (wallBefore + (SystemClock.elapsedRealtime() - monoBefore) / 2L)
-                                    bestRtt = (SystemClock.elapsedRealtime() - monoBefore).coerceAtLeast(0L)
-                                }
-                            } else {
-                                lastNetworkError = "HTTP ${resp.code} (reglas RTDB bloqueadas)"
-                            }
-                        }
                     } else if (!resp.isSuccessful) {
-                        lastNetworkError = "HTTP ${resp.code}"
+                        lastNetworkError = if (resp.code == 401 || resp.code == 403) {
+                            "HTTP ${resp.code} (Reglas Firebase RTDB bloqueadas o caducadas)"
+                        } else {
+                            "HTTP ${resp.code}"
+                        }
                     }
                 }
             } catch (e: Exception) {
@@ -161,20 +154,26 @@ class FirebaseRtdbClient {
     }
 
     private fun executeWithFailover(buildRequest: (String) -> Request): okhttp3.Response {
-        val primaryReq = buildRequest(activeBaseUrl)
-        val resp = http.newCall(primaryReq).execute()
-        if (resp.code == 401 || resp.code == 403 || resp.code == 404) {
-            val alt = alternateBaseUrl()
-            val altReq = buildRequest(alt)
-            val altResp = http.newCall(altReq).execute()
-            if (altResp.isSuccessful) {
-                resp.close()
-                activeBaseUrl = alt
-                return altResp
+        val candidates = orderedCandidateUrls()
+        var lastResp: okhttp3.Response? = null
+        for ((idx, base) in candidates.withIndex()) {
+            val req = buildRequest(base)
+            val resp = http.newCall(req).execute()
+            if (resp.isSuccessful) {
+                lastResp?.close()
+                activeBaseUrl = base
+                return resp
             }
-            altResp.close()
+            val shouldFailover = (resp.code == 401 || resp.code == 403 || resp.code == 404) && idx < candidates.lastIndex
+            if (shouldFailover) {
+                lastResp?.close()
+                lastResp = resp
+                continue
+            }
+            lastResp?.close()
+            return resp
         }
-        return resp
+        return lastResp ?: http.newCall(buildRequest(activeBaseUrl)).execute()
     }
 
     fun observePathEvents(path: String): Flow<String> = flow {
@@ -203,8 +202,9 @@ class FirebaseRtdbClient {
                                 }
                             }
                         }
-                    } else if (resp.code == 401 || resp.code == 403) {
-                        activeBaseUrl = alternateBaseUrl()
+                    } else if (resp.code == 401 || resp.code == 403 || resp.code == 404) {
+                        lastNetworkError = "SSE $path HTTP ${resp.code} (Reglas Firebase RTDB bloqueadas o caducadas)"
+                        activeBaseUrl = nextCandidateBaseUrl()
                     }
                 }
             } catch (e: Exception) {
