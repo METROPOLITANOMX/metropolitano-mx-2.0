@@ -40,12 +40,18 @@ jobs:
           echo "ANDROID_SDK_ROOT=$SDK_ROOT" >> "$GITHUB_ENV"
           SDKMANAGER=$(find "$SDK_ROOT/cmdline-tools" -name sdkmanager -type f 2>/dev/null | head -n 1 || command -v sdkmanager)
           yes | "$SDKMANAGER" --sdk_root="$SDK_ROOT" --licenses >/dev/null || true
+          "$SDKMANAGER" --sdk_root="$SDK_ROOT" "cmdline-tools;latest"
+          LATEST_SDKMANAGER="$SDK_ROOT/cmdline-tools/latest/bin/sdkmanager"
+          if [ -x "$LATEST_SDKMANAGER" ]; then
+            SDKMANAGER="$LATEST_SDKMANAGER"
+          fi
+          yes | "$SDKMANAGER" --sdk_root="$SDK_ROOT" --licenses >/dev/null || true
           "$SDKMANAGER" --sdk_root="$SDK_ROOT" "platform-tools" "build-tools;36.0.0" "platforms;android-36.1"
 
-      - name: Set up Gradle 9.3.1
+      - name: Set up Gradle 9
         uses: gradle/actions/setup-gradle@v6
         with:
-          gradle-version: '9.3.1'
+          gradle-version: '9'
 
       - name: Prepare debug keystore
         run: |
@@ -65,13 +71,13 @@ jobs:
           keytool -list -keystore debug.keystore -storepass android -alias androiddebugkey
 
       - name: Build Debug APK
-        run: >
-          gradle :app:assembleDebug
-          --no-daemon
-          --no-configuration-cache
-          --stacktrace
-          -Dorg.gradle.jvmargs="-Xmx3g -XX:MaxMetaspaceSize=1g -Dfile.encoding=UTF-8"
-          -Dorg.gradle.workers.max=2
+        run: |
+          gradle :app:assembleDebug \
+            --no-daemon \
+            --no-configuration-cache \
+            --stacktrace \
+            -Dorg.gradle.jvmargs="-Xmx3g -XX:MaxMetaspaceSize=1g -Dfile.encoding=UTF-8" \
+            -Dorg.gradle.workers.max=2
 
       - name: Rename APK for distribution
         run: |
@@ -86,14 +92,18 @@ jobs:
           retention-days: 30
 
       - name: Publish GitHub Release
-        uses: softprops/action-gh-release@v3
-        with:
-          tag_name: v2.0.${{ github.run_number }}
-          name: Metropolitano MX Pro v2.0.${{ github.run_number }}
-          body: |
-            Compilación automática de **Metropolitano MX Pro** para Android.
-            Descarga e instala `MetropolitanoMXPro.apk` en tu móvil Android para conectar en tiempo real con el circuito.
-          files: dist/MetropolitanoMXPro.apk
-          make_latest: true
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG_NAME: v2.0.${{ github.run_number }}
+        run: |
+          if gh release view "$TAG_NAME" >/dev/null 2>&1; then
+            gh release upload "$TAG_NAME" dist/MetropolitanoMXPro.apk --clobber
+          else
+            gh release create "$TAG_NAME" dist/MetropolitanoMXPro.apk \
+              --title "Metropolitano MX Pro $TAG_NAME" \
+              --notes "Compilación automática de Metropolitano MX Pro para Android." \
+              --latest || {
+                echo "::warning::La APK se compiló y subió en Artifacts (MetropolitanoMXPro-APK), pero GitHub bloqueó crear el Release por permisos del repositorio (Settings > Actions > General > Read and write permissions)."
+                exit 0
+              }
+          fi
