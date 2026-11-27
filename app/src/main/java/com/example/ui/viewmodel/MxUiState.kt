@@ -29,6 +29,10 @@ object MxRoutes {
 data class MxUiState(
     val isLoading: Boolean = true,
     val isOnline: Boolean = true,
+    val currentUserId: String = "",
+    val userDisplayName: String = "",
+    val userEmail: String? = null,
+    val isAdminAccount: Boolean = false,
     val serverTimeOffsetMs: Long = 0L,
     val lastSyncRttMs: Long = 0L,
     val sunMode: Boolean = false,
@@ -79,7 +83,7 @@ data class MxUiState(
     val aiStewardBusy: Boolean = false,
     val aiStewardError: String? = null,
     val lastAiVerdict: AiStewardVerdict? = null,
-    val lastRtdbError: String? = null,
+    val lastCloudError: String? = null,
     val statusBannerMessage: String? = null,
     val lastBackupJson: String? = null
 ) {

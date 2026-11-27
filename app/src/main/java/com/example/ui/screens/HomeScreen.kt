@@ -25,6 +25,8 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.Logout
+import androidx.compose.material.icons.filled.AccountCircle
 import androidx.compose.material.icons.filled.AddLocationAlt
 import androidx.compose.material.icons.filled.AdminPanelSettings
 import androidx.compose.material.icons.filled.BugReport
@@ -58,6 +60,8 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -70,9 +74,11 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.credentials.CredentialManager
 import com.example.R
 import com.example.data.model.formatLapMs
 import com.example.engine.CardExporter
+import com.example.engine.signOutGoogle
 import com.example.i18n.MxStrings
 import com.example.ui.components.AnimatedCheckeredRibbon
 import com.example.ui.components.CarbonStadiumBackdrop
@@ -100,16 +106,19 @@ fun HomeScreen(
 ) {
     val mx = LocalMxColors.current
     val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    val credentialManager = remember(context) { CredentialManager.create(context) }
 
-    var showAuthDialog by remember { mutableStateOf(false) }
-    var showDirectorDialog by remember { mutableStateOf(false) }
-    var showCreateCircuitDialog by remember { mutableStateOf(false) }
-    var showRankingPaddockDialog by remember { mutableStateOf(false) }
-    var showGuideDialog by remember { mutableStateOf(false) }
-    var showReportDialog by remember { mutableStateOf(false) }
-    var reportInitialType by remember { mutableStateOf("BUG") }
-    var showApkCodeDialog by remember { mutableStateOf(false) }
-    var circuitDropdownExpanded by remember { mutableStateOf(false) }
+    var showAuthDialog by rememberSaveable { mutableStateOf(false) }
+    var showAccountDialog by rememberSaveable { mutableStateOf(false) }
+    var showDirectorDialog by rememberSaveable { mutableStateOf(false) }
+    var showCreateCircuitDialog by rememberSaveable { mutableStateOf(false) }
+    var showRankingPaddockDialog by rememberSaveable { mutableStateOf(false) }
+    var showGuideDialog by rememberSaveable { mutableStateOf(false) }
+    var showReportDialog by rememberSaveable { mutableStateOf(false) }
+    var reportInitialType by rememberSaveable { mutableStateOf("BUG") }
+    var showApkCodeDialog by rememberSaveable { mutableStateOf(false) }
+    var circuitDropdownExpanded by rememberSaveable { mutableStateOf(false) }
 
     val locationLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.RequestMultiplePermissions()
@@ -194,6 +203,18 @@ fun HomeScreen(
                 }
 
                 Row(verticalAlignment = Alignment.CenterVertically) {
+                    IconButton(
+                        onClick = { showAccountDialog = true },
+                        modifier = Modifier
+                            .minimumInteractiveComponentSize()
+                            .testTag("home_account_button")
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.AccountCircle,
+                            contentDescription = if (strings.isSpanish) "Cuenta de Google" else "Google Account",
+                            tint = if (state.isOnline) mx.telemetryGreen else mx.goldAccent
+                        )
+                    }
                     IconButton(
                         onClick = { viewModel.toggleLanguageOverride() },
                         modifier = Modifier
@@ -891,6 +912,75 @@ fun HomeScreen(
             onSubmit = { sender, type, msg, circuitReq ->
                 viewModel.submitAppReport(sender, type, msg, circuitReq)
                 showReportDialog = false
+            }
+        )
+    }
+
+    if (showAccountDialog) {
+        AlertDialog(
+            onDismissRequest = { showAccountDialog = false },
+            containerColor = MaterialTheme.colorScheme.surface,
+            titleContentColor = MaterialTheme.colorScheme.onSurface,
+            textContentColor = MaterialTheme.colorScheme.onSurface,
+            title = {
+                Text(
+                    text = if (strings.isSpanish) "Cuenta Google y Nube" else "Google Account & Cloud",
+                    style = MaterialTheme.typography.titleLarge
+                )
+            },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text(
+                        text = state.userDisplayName.ifBlank { state.currentRider?.name ?: "Piloto" },
+                        style = MaterialTheme.typography.titleMedium,
+                        color = mx.goldAccent
+                    )
+                    state.userEmail?.let { email ->
+                        Text(
+                            text = email,
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = mx.subtleText
+                        )
+                    }
+                    if (state.isAdminAccount) {
+                        Text(
+                            text = if (strings.isSpanish) "Administrador Oficial del Club" else "Official Club Admin",
+                            style = MaterialTheme.typography.labelMedium,
+                            color = mx.telemetryGreen
+                        )
+                    }
+                    Text(
+                        text = if (state.isOnline && state.lastCloudError == null) {
+                            if (strings.isSpanish) "Cloud Firestore sincronizado en tiempo real" else "Cloud Firestore synced in real time"
+                        } else {
+                            state.lastCloudError ?: (if (strings.isSpanish) "Reconectando a la nube..." else "Reconnecting to cloud...")
+                        },
+                        style = MaterialTheme.typography.bodySmall,
+                        color = if (state.isOnline) mx.telemetryGreen else mx.goldBright
+                    )
+                }
+            },
+            confirmButton = {
+                Mx3dButton(
+                    onClick = {
+                        showAccountDialog = false
+                        signOutGoogle(credentialManager, scope) {
+                            viewModel.logoutRider()
+                        }
+                    },
+                    containerColor = mx.racingRed,
+                    contentColor = Color.White,
+                    modifier = Modifier.testTag("home_google_signout_button")
+                ) {
+                    Icon(Icons.AutoMirrored.Filled.Logout, contentDescription = null, modifier = Modifier.size(16.dp))
+                    Spacer(Modifier.width(6.dp))
+                    Text(if (strings.isSpanish) "Cerrar sesión" else "Sign out")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showAccountDialog = false }) {
+                    Text(if (strings.isSpanish) "Cerrar" else "Close", color = mx.subtleText)
+                }
             }
         )
     }

@@ -1,9 +1,9 @@
 package com.example.ui.viewmodel
 
-import android.app.Application
+import android.content.Context
 import android.media.ToneGenerator
 import android.os.SystemClock
-import androidx.lifecycle.AndroidViewModel
+import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.data.local.UserPreferences
 import com.example.data.model.ActiveRoomRider
@@ -19,6 +19,7 @@ import com.example.data.model.ChampionshipStanding
 import com.example.data.model.CheerMessage
 import com.example.data.model.Circuit
 import com.example.data.model.DetectionMode
+import com.example.data.model.FanInteractionState
 import com.example.data.model.FlagState
 import com.example.data.model.GameMode
 import com.example.data.model.GarageBackupPayload
@@ -54,14 +55,16 @@ import com.example.engine.PocketAudioService
 import com.example.engine.VisionDetectionResult
 import com.example.engine.VoiceAndAudioEngine
 import com.example.i18n.StringsProvider
+import com.google.firebase.firestore.FirebaseFirestoreException
 import kotlin.math.abs
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.first
-import kotlinx.coroutines.flow.merge
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
@@ -73,12 +76,17 @@ import java.util.Locale
 import java.util.UUID
 import kotlin.random.Random
 
-class MxProViewModel(application: Application) : AndroidViewModel(application) {
+class MxProViewModel(
+    private val appContext: Context,
+    private val repo: MxProRepository,
+    private val currentUserId: String,
+    private val userEmail: String?,
+    private val userDisplayName: String?
+) : ViewModel() {
 
-    private val repo = MxProRepository(application)
-    private val prefs = UserPreferences(application)
-    val voiceEngine = VoiceAndAudioEngine(application)
-    private val locationGuard = LocationGuard(application)
+    private val prefs = UserPreferences(appContext)
+    val voiceEngine = VoiceAndAudioEngine(appContext)
+    private val locationGuard = LocationGuard(appContext)
     private val aiSteward = GeminiStewardEngine()
     private val lanBridge = LocalLanAntennaBridge()
 
@@ -109,12 +117,22 @@ class MxProViewModel(application: Application) : AndroidViewModel(application) {
             val devId = prefs.ensureDeviceId()
             val stored = prefs.prefsFlow.first()
             val cachedRiders = repo.getCachedRiders()
-            val cachedLogged = cachedRiders.firstOrNull { it.id == stored.loggedInRiderId }
+            val cachedLogged = cachedRiders.firstOrNull { it.id == currentUserId }
+                ?: cachedRiders.firstOrNull { it.id == stored.loggedInRiderId }
+            val isAdmin = repo.isCurrentUserAdmin()
+            val fallbackName = userDisplayName?.trim()?.takeIf { it.isNotBlank() }
+                ?: cachedLogged?.name
+                ?: stored.rememberedRiderName.ifBlank { "Piloto MX" }
             _uiState.update {
                 it.copy(
+                    currentUserId = currentUserId,
+                    userDisplayName = fallbackName,
+                    userEmail = userEmail,
+                    isAdminAccount = isAdmin,
+                    directorUnlocked = isAdmin,
                     sunMode = stored.sunMode,
                     languageOverride = stored.languageOverride,
-                    rememberedName = stored.rememberedRiderName,
+                    rememberedName = stored.rememberedRiderName.ifBlank { fallbackName },
                     rememberedPass = stored.rememberedPassword,
                     rememberMe = stored.rememberMe,
                     rememberedDirectorPass = stored.rememberedDirectorPass,
@@ -127,48 +145,53 @@ class MxProViewModel(application: Application) : AndroidViewModel(application) {
             }
             voiceEngine.applyLocale(StringsProvider.current(stored.languageOverride).isSpanish)
 
+            repo.ensureUserProfile(fallbackName, userEmail)
+
             val offset = repo.syncClock(devId)
             val circuits = repo.getCircuits()
             val active = circuits.firstOrNull { it.id == stored.activeCircuitId } ?: circuits.first()
             val globalCfg = repo.getGlobalConfig()
-            // Log visit cleanly and persist both locally and to Firebase RTDB
             val visitStamp = SimpleDateFormat("dd/MM HH:mm", Locale.getDefault()).format(Date())
-            val updatedCfg = globalCfg.copy(
-                visitCount = globalCfg.visitCount + 1,
-                lastVisits = (listOf("$visitStamp (${devId.take(6)})") + globalCfg.lastVisits).take(25)
-            )
-            repo.saveGlobalConfig(updatedCfg)
+            val nextVisitCount = globalCfg.visitCount + 1
+            val nextLastVisits = (listOf("$visitStamp (${devId.take(6)})") + globalCfg.lastVisits).take(25)
+            repo.recordVisitTelemetry(nextVisitCount, nextLastVisits)
+            val updatedCfg = globalCfg.copy(visitCount = nextVisitCount, lastVisits = nextLastVisits)
 
             val riders = repo.getRiders()
-            val loggedRider = riders.firstOrNull { it.id == stored.loggedInRiderId } ?: cachedLogged
+            val bikes = repo.getAllBikes()
+            val loggedRider = riders.firstOrNull { it.id == currentUserId }
+                ?: repo.getRider(currentUserId)
+                ?: cachedLogged?.takeIf { it.id == currentUserId }
 
             _uiState.update {
                 it.copy(
                     isLoading = false,
                     isOnline = repo.isOnline(),
+                    lastCloudError = repo.lastCloudError(),
                     serverTimeOffsetMs = offset,
                     lastSyncRttMs = repo.lastSyncRttMs(),
                     globalConfig = updatedCfg,
                     circuits = circuits,
                     activeCircuit = active,
+                    allBikes = bikes,
                     riders = riders.ifEmpty { cachedRiders },
                     currentRider = loggedRider
                 )
             }
             refreshLocation()
             syncCircuitData(active.id)
-            startCircuitSseStream(active.id)
+            startCircuitFirestoreListeners(active.id)
             repo.flushPendingLaps()
         }
 
-        // Real-time reconciliation loop + periodic 60s clock drift recalibration
+        // Secondary reconciliation loop (color profiles, captures, championships, bikes) + periodic clock check
         viewModelScope.launch {
             var tick = 0
             while (isActive) {
-                delay(3000L)
+                delay(12_000L)
                 tick++
                 val state = _uiState.value
-                if (tick % 20 == 0 && state.deviceId.isNotBlank()) {
+                if (tick % 5 == 0 && state.deviceId.isNotBlank()) {
                     val newOffset = repo.syncClock(state.deviceId)
                     _uiState.update {
                         it.copy(
@@ -333,14 +356,225 @@ class MxProViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    private fun startCircuitSseStream(circuitId: String) {
+    private fun startCircuitFirestoreListeners(circuitId: String) {
         streamJob?.cancel()
         streamJob = viewModelScope.launch {
-            merge(
-                repo.observeRoomEvents(circuitId),
-                repo.observeAntennaEvents(circuitId)
-            ).collect {
-                syncCircuitData(circuitId)
+            launch {
+                repo.observeRoomDoc(circuitId)
+                    .catch { err ->
+                        val fsErr = generateSequence(err) { it.cause }
+                            .filterIsInstance<FirebaseFirestoreException>()
+                            .firstOrNull()
+                        if (fsErr == null && err is CancellationException) throw err
+                        _uiState.update {
+                            it.copy(
+                                isOnline = false,
+                                lastCloudError = fsErr?.localizedMessage ?: err.localizedMessage
+                            )
+                        }
+                    }
+                    .collect { remoteRoom ->
+                        if (remoteRoom != null) {
+                            val currentRiders = _uiState.value.roomState.activeRiders
+                            val mergedRoom = remoteRoom.copy(activeRiders = currentRiders)
+                            processRoomSideEffects(mergedRoom)
+                            _uiState.update {
+                                it.copy(
+                                    isOnline = true,
+                                    lastCloudError = null,
+                                    roomState = mergedRoom
+                                )
+                            }
+                        }
+                    }
+            }
+            launch {
+                repo.observeActiveRiders(circuitId)
+                    .catch { err ->
+                        val fsErr = generateSequence(err) { it.cause }
+                            .filterIsInstance<FirebaseFirestoreException>()
+                            .firstOrNull()
+                        if (fsErr == null && err is CancellationException) throw err
+                    }
+                    .collect { activeMap ->
+                        _uiState.update { st ->
+                            st.copy(roomState = st.roomState.copy(activeRiders = activeMap))
+                        }
+                    }
+            }
+            launch {
+                repo.observeAntennas(circuitId)
+                    .catch { err ->
+                        val fsErr = generateSequence(err) { it.cause }
+                            .filterIsInstance<FirebaseFirestoreException>()
+                            .firstOrNull()
+                        if (fsErr == null && err is CancellationException) throw err
+                    }
+                    .collect { fetchedAntennas ->
+                        val merged = mergeAntennasPreferringFresh(_uiState.value.antennas, fetchedAntennas, true)
+                        val nowMs = syncedNowMs()
+                        val updatedMono = updateAntennaMonoTracker(
+                            _uiState.value.antennas,
+                            merged,
+                            _uiState.value.antennaLastChangeMonoMs,
+                            nowMs
+                        )
+                        _uiState.update { st ->
+                            st.copy(
+                                isOnline = true,
+                                lastCloudError = null,
+                                antennas = merged,
+                                antennaLastChangeMonoMs = updatedMono,
+                                otherCircuitOnlineAntenna = null
+                            )
+                        }
+                    }
+            }
+            launch {
+                repo.observeLaps(circuitId)
+                    .catch { err ->
+                        val fsErr = generateSequence(err) { it.cause }
+                            .filterIsInstance<FirebaseFirestoreException>()
+                            .firstOrNull()
+                        if (fsErr == null && err is CancellationException) throw err
+                    }
+                    .collect { laps ->
+                        _uiState.update { it.copy(circuitLaps = laps) }
+                    }
+            }
+            launch {
+                repo.observeFanInteraction(circuitId)
+                    .catch { err ->
+                        val fsErr = generateSequence(err) { it.cause }
+                            .filterIsInstance<FirebaseFirestoreException>()
+                            .firstOrNull()
+                        if (fsErr == null && err is CancellationException) throw err
+                    }
+                    .collect { fan ->
+                        processFanSideEffects(fan)
+                        _uiState.update { it.copy(fanState = fan) }
+                    }
+            }
+        }
+    }
+
+    private fun processFanSideEffects(fan: FanInteractionState) {
+        val esSync = StringsProvider.current(_uiState.value.languageOverride).isSpanish
+        val room = _uiState.value.roomState
+        val suppressAntennaSpeech = _uiState.value.isAntennaRoleActive && room.sessionPhase != SessionPhase.IDLE
+        val fanAudioAllowed = !suppressAntennaSpeech && !_uiState.value.paAudioMuted && _uiState.value.antennaVoiceEnabled
+
+        if (!fanAudioSeeded) {
+            fanAudioSeeded = true
+            lastOvationCount = fan.ovationCount
+            lastOvationTenMilestone = fan.ovationCount / 10
+            lastSeenCheerId = fan.cheerMessages.firstOrNull()?.id.orEmpty()
+            lastSeenBetsSnapshot = fan.bets
+            lastSeenMvpVotesSnapshot = fan.mvpVotes
+        } else {
+            if (fan.ovationCount > lastOvationCount) {
+                lastOvationCount = fan.ovationCount
+                val tenBlock = fan.ovationCount / 10
+                if (tenBlock > lastOvationTenMilestone && fan.ovationCount > 0) {
+                    lastOvationTenMilestone = tenBlock
+                    if (fanAudioAllowed) {
+                        voiceEngine.playStadiumApplause()
+                        voiceEngine.speak(
+                            if (esSync) "¡Ovación de la grada!" else "Crowd ovation!",
+                            flush = false
+                        )
+                    }
+                } else if (fanAudioAllowed) {
+                    voiceEngine.playBeep(ToneGenerator.TONE_PROP_BEEP, 110)
+                }
+            }
+
+            if (fan.bets != lastSeenBetsSnapshot) {
+                val changedBet = fan.bets.entries.firstOrNull { (k, v) -> lastSeenBetsSnapshot[k] != v }
+                lastSeenBetsSnapshot = fan.bets
+                if (changedBet != null && fanAudioAllowed) {
+                    voiceEngine.playBeep(ToneGenerator.TONE_PROP_ACK, 150)
+                    voiceEngine.speak(
+                        if (esSync) "Porra de grada: ${changedBet.key} apuesta por ${changedBet.value}"
+                        else "Crowd bet: ${changedBet.key} picks ${changedBet.value}",
+                        flush = false
+                    )
+                }
+            }
+
+            if (fan.mvpVotes != lastSeenMvpVotesSnapshot) {
+                val votedRider = fan.mvpVotes.entries.firstOrNull { (k, v) -> v > (lastSeenMvpVotesSnapshot[k] ?: 0) }?.key
+                lastSeenMvpVotesSnapshot = fan.mvpVotes
+                if (votedRider != null && fanAudioAllowed) {
+                    voiceEngine.playBeep(ToneGenerator.TONE_PROP_ACK, 150)
+                    voiceEngine.speak(
+                        if (esSync) "Voto M V P de la grada para $votedRider"
+                        else "Fan M V P vote for $votedRider",
+                        flush = false
+                    )
+                }
+            }
+
+            val latestCheer = fan.cheerMessages.firstOrNull()
+            if (latestCheer != null && latestCheer.id != lastSeenCheerId &&
+                syncedNowMs() - latestCheer.timestampMs < 20_000L
+            ) {
+                lastSeenCheerId = latestCheer.id
+                val target = if (latestCheer.targetRider.isNotBlank()) {
+                    if (esSync) " para ${latestCheer.targetRider}" else " for ${latestCheer.targetRider}"
+                } else ""
+                if (fanAudioAllowed) {
+                    voiceEngine.playBeep(ToneGenerator.TONE_PROP_BEEP2, 160)
+                    voiceEngine.speak("${latestCheer.fanName}$target: ${latestCheer.text}", flush = false)
+                }
+            }
+        }
+
+        if (fan.paClipBase64.isNotBlank() && !_uiState.value.paAudioMuted) {
+            voiceEngine.playRemotePaClipIfNew(fan.paClipBase64, fan.paClipTimestampMs)
+        }
+    }
+
+    private fun processRoomSideEffects(room: RoomState) {
+        val esSync = StringsProvider.current(_uiState.value.languageOverride).isSpanish
+        val suppressAntennaSpeech = _uiState.value.isAntennaRoleActive && room.sessionPhase != SessionPhase.IDLE
+        val fanAudioAllowed = !suppressAntennaSpeech && !_uiState.value.paAudioMuted && _uiState.value.antennaVoiceEnabled
+
+        val paAnn = room.lastPaAnnouncement
+        if (paAnn != null && paAnn.id.isNotBlank() && paAnn.id != lastSpokenPaAnnouncementId &&
+            syncedNowMs() - paAnn.timestampMs < 15_000L
+        ) {
+            lastSpokenPaAnnouncementId = paAnn.id
+            if (fanAudioAllowed) {
+                if (paAnn.isHotlap) {
+                    voiceEngine.playBeep(ToneGenerator.TONE_PROP_ACK, 220)
+                }
+                voiceEngine.speak(if (esSync) paAnn.textEs else paAnn.textEn, flush = false)
+            }
+        }
+
+        val me = _uiState.value.currentRider
+        if (me != null) {
+            val activeEntry = room.activeRiders[me.id]
+            val isActivelyRiding = room.sessionPhase == SessionPhase.RACING ||
+                room.sessionPhase == SessionPhase.WARMUP ||
+                (activeEntry?.lastPassTimestampMs ?: 0L) > 0L
+            if (isActivelyRiding &&
+                activeEntry != null &&
+                activeEntry.sessionStartMs > 0L &&
+                activeEntry.sessionStartMs != lipoAlertFiredForSessionStart
+            ) {
+                val elapsedMin = (syncedNowMs() - activeEntry.sessionStartMs) / 60_000L
+                if (elapsedMin >= room.lipoWarnMinutes) {
+                    lipoAlertFiredForSessionStart = activeEntry.sessionStartMs
+                    if (!_uiState.value.isAntennaRoleActive && !_uiState.value.paAudioMuted) {
+                        voiceEngine.playBeep(ToneGenerator.TONE_CDMA_ALERT_CALL_GUARD, 400)
+                        voiceEngine.speak(
+                            if (esSync) "Atención ${me.name}, doce minutos en pista, revisa la batería LiPo"
+                            else "Attention ${me.name}, twelve minutes on track, check LiPo battery"
+                        )
+                    }
+                }
             }
         }
     }
@@ -382,127 +616,10 @@ class MxProViewModel(application: Application) : AndroidViewModel(application) {
         val riders = repo.getRiders()
         val globalCfg = repo.getGlobalConfig()
 
-        val esSync = StringsProvider.current(_uiState.value.languageOverride).isSpanish
-        val suppressAntennaSpeech = _uiState.value.isAntennaRoleActive && room.sessionPhase != SessionPhase.IDLE
-        val fanAudioAllowed = !suppressAntennaSpeech && !_uiState.value.paAudioMuted && _uiState.value.antennaVoiceEnabled
+        processFanSideEffects(fan)
+        processRoomSideEffects(room)
 
-        if (!fanAudioSeeded) {
-            fanAudioSeeded = true
-            lastOvationCount = fan.ovationCount
-            lastOvationTenMilestone = fan.ovationCount / 10
-            lastSeenCheerId = fan.cheerMessages.firstOrNull()?.id.orEmpty()
-            lastSeenBetsSnapshot = fan.bets
-            lastSeenMvpVotesSnapshot = fan.mvpVotes
-        } else {
-            // 1. Stadium ovation tap sound + every-10-taps applause on Pilot phones & PA
-            if (fan.ovationCount > lastOvationCount) {
-                lastOvationCount = fan.ovationCount
-                val tenBlock = fan.ovationCount / 10
-                if (tenBlock > lastOvationTenMilestone && fan.ovationCount > 0) {
-                    lastOvationTenMilestone = tenBlock
-                    if (fanAudioAllowed) {
-                        voiceEngine.playStadiumApplause()
-                        voiceEngine.speak(
-                            if (esSync) "¡Ovación de la grada!" else "Crowd ovation!",
-                            flush = false
-                        )
-                    }
-                } else if (fanAudioAllowed) {
-                    voiceEngine.playBeep(ToneGenerator.TONE_PROP_BEEP, 110)
-                }
-            }
-
-            // 2. Pre-race Fastest Lap Bet spoken cue on Pilot phones & PA
-            if (fan.bets != lastSeenBetsSnapshot) {
-                val changedBet = fan.bets.entries.firstOrNull { (k, v) -> lastSeenBetsSnapshot[k] != v }
-                lastSeenBetsSnapshot = fan.bets
-                if (changedBet != null && fanAudioAllowed) {
-                    voiceEngine.playBeep(ToneGenerator.TONE_PROP_ACK, 150)
-                    voiceEngine.speak(
-                        if (esSync) "Porra de grada: ${changedBet.key} apuesta por ${changedBet.value}"
-                        else "Crowd bet: ${changedBet.key} picks ${changedBet.value}",
-                        flush = false
-                    )
-                }
-            }
-
-            // 3. MVP Vote spoken cue on Pilot phones & PA
-            if (fan.mvpVotes != lastSeenMvpVotesSnapshot) {
-                val votedRider = fan.mvpVotes.entries.firstOrNull { (k, v) -> v > (lastSeenMvpVotesSnapshot[k] ?: 0) }?.key
-                lastSeenMvpVotesSnapshot = fan.mvpVotes
-                if (votedRider != null && fanAudioAllowed) {
-                    voiceEngine.playBeep(ToneGenerator.TONE_PROP_ACK, 150)
-                    voiceEngine.speak(
-                        if (esSync) "Voto M V P de la grada para $votedRider"
-                        else "Fan M V P vote for $votedRider",
-                        flush = false
-                    )
-                }
-            }
-
-            // 4. Predefined Fan Cheer Message -> Pilot phones & PA
-            val latestCheer = fan.cheerMessages.firstOrNull()
-            if (latestCheer != null && latestCheer.id != lastSeenCheerId &&
-                syncedNowMs() - latestCheer.timestampMs < 20_000L
-            ) {
-                lastSeenCheerId = latestCheer.id
-                val target = if (latestCheer.targetRider.isNotBlank()) {
-                    if (esSync) " para ${latestCheer.targetRider}" else " for ${latestCheer.targetRider}"
-                } else ""
-                if (fanAudioAllowed) {
-                    voiceEngine.playBeep(ToneGenerator.TONE_PROP_BEEP2, 160)
-                    voiceEngine.speak("${latestCheer.fanName}$target: ${latestCheer.text}", flush = false)
-                }
-            }
-        }
-
-        // Check live PA clip (Direct Director Mic)
-        if (fan.paClipBase64.isNotBlank() && !_uiState.value.paAudioMuted) {
-            voiceEngine.playRemotePaClipIfNew(fan.paClipBase64, fan.paClipTimestampMs)
-        }
-
-        // Sync live multi-device PA TTS announcements across Pilots, Director & Fans
-        // Dedicated finish-line Antennas stay silent during active heats/races (only transmit to Director)
-        val paAnn = room.lastPaAnnouncement
-        if (paAnn != null && paAnn.id.isNotBlank() && paAnn.id != lastSpokenPaAnnouncementId &&
-            syncedNowMs() - paAnn.timestampMs < 15_000L
-        ) {
-            lastSpokenPaAnnouncementId = paAnn.id
-            if (fanAudioAllowed) {
-                if (paAnn.isHotlap) {
-                    voiceEngine.playBeep(ToneGenerator.TONE_PROP_ACK, 220)
-                }
-                voiceEngine.speak(if (esSync) paAnn.textEs else paAnn.textEn, flush = false)
-            }
-        }
-
-        // Check 12-min LiPo battery alert ONLY when pilot is actively riding
-        val me = _uiState.value.currentRider
-        if (me != null) {
-            val activeEntry = room.activeRiders[me.id]
-            val isActivelyRiding = room.sessionPhase == SessionPhase.RACING ||
-                room.sessionPhase == SessionPhase.WARMUP ||
-                (activeEntry?.lastPassTimestampMs ?: 0L) > 0L
-            if (isActivelyRiding &&
-                activeEntry != null &&
-                activeEntry.sessionStartMs > 0L &&
-                activeEntry.sessionStartMs != lipoAlertFiredForSessionStart
-            ) {
-                val elapsedMin = (syncedNowMs() - activeEntry.sessionStartMs) / 60_000L
-                if (elapsedMin >= room.lipoWarnMinutes) {
-                    lipoAlertFiredForSessionStart = activeEntry.sessionStartMs
-                    if (!_uiState.value.isAntennaRoleActive && !_uiState.value.paAudioMuted) {
-                        voiceEngine.playBeep(ToneGenerator.TONE_CDMA_ALERT_CALL_GUARD, 400)
-                        voiceEngine.speak(
-                            if (esSync) "Atención ${me.name}, doce minutos en pista, revisa la batería LiPo"
-                            else "Attention ${me.name}, twelve minutes on track, check LiPo battery"
-                        )
-                    }
-                }
-            }
-        }
-
-        val es = esSync
+        val es = StringsProvider.current(_uiState.value.languageOverride).isSpanish
         val currentBefore = _uiState.value.currentRider
         var forcedLogoutMsg: String? = null
         val refreshedLoggedRider = if (currentBefore != null) {
@@ -541,7 +658,7 @@ class MxProViewModel(application: Application) : AndroidViewModel(application) {
             val safeRiders = riders.ifEmpty { state.riders }
             state.copy(
                 isOnline = repo.isOnline(),
-                lastRtdbError = repo.lastRtdbError(),
+                lastCloudError = repo.lastCloudError(),
                 roomState = room,
                 circuitLaps = laps,
                 antennas = mergedAntennas,
@@ -620,7 +737,8 @@ class MxProViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     private suspend fun findOtherCircuitLiveAntenna(activeCircuitId: String, nowMs: Long): Pair<String, String>? {
-        val all = repo.getAllCircuitAntennas()
+        val circuitIds = _uiState.value.circuits.map { it.id }
+        val all = repo.getAllCircuitAntennas(circuitIds)
         all.forEach { (cId, antMap) ->
             if (cId != activeCircuitId) {
                 antMap.values.forEach { cfg ->
@@ -650,7 +768,7 @@ class MxProViewModel(application: Application) : AndroidViewModel(application) {
             _uiState.update { st ->
                 st.copy(
                     isOnline = repo.isOnline(),
-                    lastRtdbError = repo.lastRtdbError(),
+                    lastCloudError = repo.lastCloudError(),
                     globalConfig = globalCfg.copy(
                         visitCount = maxOf(globalCfg.visitCount, st.globalConfig.visitCount),
                         lastVisits = globalCfg.lastVisits.ifEmpty { st.globalConfig.lastVisits }
@@ -681,7 +799,7 @@ class MxProViewModel(application: Application) : AndroidViewModel(application) {
             _uiState.update { st ->
                 st.copy(
                     isOnline = repo.isOnline(),
-                    lastRtdbError = repo.lastRtdbError(),
+                    lastCloudError = repo.lastCloudError(),
                     antennas = mergedAntennas,
                     antennaLastChangeMonoMs = updatedMono,
                     otherCircuitOnlineAntenna = otherCirc,
@@ -694,6 +812,36 @@ class MxProViewModel(application: Application) : AndroidViewModel(application) {
 
     fun clearBannerMessage() {
         _uiState.update { it.copy(statusBannerMessage = null) }
+    }
+
+    fun notifyStatusBanner(message: String) {
+        _uiState.update { it.copy(statusBannerMessage = message) }
+    }
+
+    fun retryCloudConnection() {
+        val es = StringsProvider.current(_uiState.value.languageOverride).isSpanish
+        val devId = _uiState.value.deviceId
+        viewModelScope.launch {
+            repo.syncClock(devId)
+            val err = repo.lastCloudError()
+            val connected = repo.isOnline()
+            _uiState.update {
+                it.copy(
+                    isOnline = connected,
+                    lastCloudError = err,
+                    antennaLastSyncError = if (connected) null else err,
+                    statusBannerMessage = if (connected) {
+                        if (es) "Cloud Firestore conectado automáticamente" else "Cloud Firestore connected automatically"
+                    } else {
+                        if (es) "Sin conexión a Firestore: ${err ?: "revisa red"}" else "Firestore offline: ${err ?: "check network"}"
+                    }
+                )
+            }
+            if (connected) {
+                refreshDirectorDashboard()
+                startCircuitFirestoreListeners(_uiState.value.activeCircuit.id)
+            }
+        }
     }
 
     fun toggleSunMode() {
@@ -726,7 +874,7 @@ class MxProViewModel(application: Application) : AndroidViewModel(application) {
             })
             _uiState.update { it.copy(activeCircuit = circuit, geoStatus = geo) }
             syncCircuitData(circuit.id)
-            startCircuitSseStream(circuit.id)
+            startCircuitFirestoreListeners(circuit.id)
         }
     }
 
@@ -760,61 +908,100 @@ class MxProViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    // --- Rider Authentication & Account Recovery ---
-    fun registerRider(name: String, passwordPlain: String, pin4: String, remember: Boolean, onSuccess: () -> Unit) {
+    // --- Google-Linked Pilot Profile & Garage ---
+    fun createOrUpdateGoogleRiderProfile(
+        rawName: String,
+        surface: SurfaceType = _uiState.value.activeCircuit.surface,
+        dorsal: String = "",
+        bikeModel: String = "",
+        onSuccess: () -> Unit
+    ) {
         val es = StringsProvider.current(_uiState.value.languageOverride).isSpanish
-        if (!_uiState.value.globalConfig.registrationOpen) {
+        val cleanName = rawName.trim().ifBlank { userDisplayName?.trim().orEmpty() }.ifBlank { "Piloto MX" }
+        val existingSelf = _uiState.value.currentRider
+            ?: _uiState.value.riders.firstOrNull { it.id == currentUserId }
+
+        if (existingSelf == null && !_uiState.value.globalConfig.registrationOpen && !repo.isCurrentUserAdmin()) {
             _uiState.update {
                 it.copy(statusBannerMessage = if (es) "Registros cerrados por Dirección" else "Registrations closed by Director")
             }
             return
         }
-        if (name.isBlank() || passwordPlain.length < 3 || pin4.length != 4) {
-            _uiState.update {
-                it.copy(statusBannerMessage = if (es) "Completa nombre, clave y PIN de 4 dígitos" else "Enter name, password, and 4-digit PIN")
-            }
-            return
-        }
         viewModelScope.launch {
-            val existing = repo.getRiders().firstOrNull { it.name.equals(name.trim(), ignoreCase = true) }
-            if (existing != null) {
-                _uiState.update {
-                    it.copy(statusBannerMessage = if (es) "Ese nombre de piloto ya existe" else "Rider name already exists")
+            val riderId = currentUserId
+            val existingRemote = existingSelf ?: repo.getRider(riderId)
+            val allBikes = repo.getAllBikes()
+            val existingBike = allBikes.firstOrNull { it.id == existingRemote?.activeBikeId }
+                ?: allBikes.firstOrNull { it.riderId == riderId }
+
+            if (existingRemote != null) {
+                if (existingRemote.status == RiderStatus.BLOCKED) {
+                    _uiState.update {
+                        it.copy(statusBannerMessage = if (es) "Cuenta bloqueada por Dirección" else "Account blocked by Director")
+                    }
+                    return@launch
                 }
+                val activeBike = existingBike ?: BikeSetup.defaultsFor(surface).copy(
+                    id = "b_${UUID.randomUUID().toString().take(8)}",
+                    riderId = riderId,
+                    riderName = cleanName,
+                    modelName = bikeModel.trim().ifBlank { if (surface == SurfaceType.SM) "Losi Promoto-SM" else "Losi Promoto-MX" },
+                    dorsal = dorsal.trim().ifBlank { (10 + Random.nextInt(89)).toString() }
+                ).also { repo.saveBike(it) }
+
+                val updated = existingRemote.copy(
+                    name = cleanName,
+                    activeBikeId = activeBike.id,
+                    preferredSurface = activeBike.discipline,
+                    lastSeenAt = syncedNowMs()
+                )
+                repo.saveRider(updated)
+                prefs.saveLoginState(updated.id, updated.name, "", true)
+                val riders = repo.getRiders()
+                val bikes = repo.getAllBikes()
+                _uiState.update {
+                    it.copy(
+                        riders = riders.ifEmpty { it.riders },
+                        allBikes = bikes.ifEmpty { it.allBikes },
+                        currentRider = updated,
+                        rememberedName = updated.name,
+                        rememberMe = true
+                    )
+                }
+                enrollRiderInActiveRoom(updated, activeBike)
+                onSuccess()
                 return@launch
             }
-            val riderId = "r_${UUID.randomUUID().toString().take(8)}"
+
             val bikeId = "b_${UUID.randomUUID().toString().take(8)}"
-            val starterBike = BikeSetup.defaultsFor(_uiState.value.activeCircuit.surface).copy(
+            val starterBike = BikeSetup.defaultsFor(surface).copy(
                 id = bikeId,
                 riderId = riderId,
-                riderName = name.trim(),
-                dorsal = (10 + Random.nextInt(89)).toString()
+                riderName = cleanName,
+                modelName = bikeModel.trim().ifBlank { if (surface == SurfaceType.SM) "Losi Promoto-SM" else "Losi Promoto-MX" },
+                dorsal = dorsal.trim().ifBlank { (10 + Random.nextInt(89)).toString() }
             )
             val account = RiderAccount(
                 id = riderId,
-                name = name.trim(),
-                passwordHash = sha256(passwordPlain),
-                pin4 = pin4,
+                name = cleanName,
                 status = RiderStatus.ACTIVE,
                 activeBikeId = bikeId,
-                preferredSurface = _uiState.value.activeCircuit.surface,
+                preferredSurface = surface,
                 createdAt = syncedNowMs(),
                 lastSeenAt = syncedNowMs()
             )
             repo.saveBike(starterBike)
             repo.saveRider(account)
-            prefs.saveLoginState(account.id, account.name, passwordPlain, remember)
+            prefs.saveLoginState(account.id, account.name, "", true)
             val riders = repo.getRiders()
             val bikes = repo.getAllBikes()
             _uiState.update {
                 it.copy(
-                    riders = riders,
-                    allBikes = bikes,
+                    riders = riders.ifEmpty { listOf(account) },
+                    allBikes = bikes.ifEmpty { listOf(starterBike) },
                     currentRider = account,
-                    rememberedName = if (remember) account.name else "",
-                    rememberedPass = if (remember) passwordPlain else "",
-                    rememberMe = remember
+                    rememberedName = account.name,
+                    rememberMe = true
                 )
             }
             enrollRiderInActiveRoom(account, starterBike)
@@ -822,63 +1009,28 @@ class MxProViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    fun registerRider(name: String, passwordPlain: String, pin4: String, remember: Boolean, onSuccess: () -> Unit) {
+        createOrUpdateGoogleRiderProfile(
+            rawName = name,
+            surface = _uiState.value.activeCircuit.surface,
+            onSuccess = onSuccess
+        )
+    }
+
     fun signInRider(name: String, passwordPlain: String, remember: Boolean, onSuccess: () -> Unit) {
-        val es = StringsProvider.current(_uiState.value.languageOverride).isSpanish
-        viewModelScope.launch {
-            val riders = repo.getRiders()
-            val match = riders.firstOrNull {
-                it.name.equals(name.trim(), ignoreCase = true) && it.passwordHash == sha256(passwordPlain)
-            }
-            if (match == null) {
-                _uiState.update {
-                    it.copy(statusBannerMessage = if (es) "Credenciales incorrectas" else "Invalid credentials")
-                }
-                return@launch
-            }
-            if (match.status == RiderStatus.BLOCKED) {
-                _uiState.update {
-                    it.copy(statusBannerMessage = if (es) "Cuenta bloqueada por Dirección" else "Account blocked by Director")
-                }
-                return@launch
-            }
-            val updated = match.copy(lastSeenAt = syncedNowMs())
-            repo.saveRider(updated)
-            prefs.saveLoginState(updated.id, updated.name, passwordPlain, remember)
-            val bikes = repo.getAllBikes()
-            val bike = bikes.firstOrNull { it.id == updated.activeBikeId } ?: bikes.firstOrNull { it.riderId == updated.id }
-            _uiState.update {
-                it.copy(
-                    riders = riders,
-                    allBikes = bikes,
-                    currentRider = updated,
-                    rememberedName = if (remember) updated.name else "",
-                    rememberedPass = if (remember) passwordPlain else "",
-                    rememberMe = remember
-                )
-            }
-            enrollRiderInActiveRoom(updated, bike)
-            onSuccess()
-        }
+        createOrUpdateGoogleRiderProfile(
+            rawName = name,
+            surface = _uiState.value.activeCircuit.surface,
+            onSuccess = onSuccess
+        )
     }
 
     fun recoverPasswordWithPin(name: String, pin4: String, newPassword: String) {
         val es = StringsProvider.current(_uiState.value.languageOverride).isSpanish
-        viewModelScope.launch {
-            val riders = repo.getRiders()
-            val match = riders.firstOrNull {
-                it.name.equals(name.trim(), ignoreCase = true) && it.pin4 == pin4.trim()
-            }
-            if (match == null || newPassword.length < 3) {
-                _uiState.update {
-                    it.copy(statusBannerMessage = if (es) "PIN incorrecto o clave muy corta" else "Wrong PIN or short password")
-                }
-                return@launch
-            }
-            val updated = match.copy(passwordHash = sha256(newPassword))
-            repo.saveRider(updated)
-            _uiState.update {
-                it.copy(statusBannerMessage = if (es) "Clave actualizada. Inicia sesión." else "Password updated. Sign in now.")
-            }
+        _uiState.update {
+            it.copy(
+                statusBannerMessage = if (es) "Tu perfil está vinculado automáticamente a tu cuenta de Google" else "Your profile is automatically linked to your Google account"
+            )
         }
     }
 
@@ -1055,7 +1207,7 @@ class MxProViewModel(application: Application) : AndroidViewModel(application) {
             riderProfile = rider,
             bikes = _uiState.value.myBikes
         )
-        val json = repo.rtdb.moshi.adapter(GarageBackupPayload::class.java).toJson(payload)
+        val json = repo.moshi.adapter(GarageBackupPayload::class.java).toJson(payload)
         _uiState.update { it.copy(lastBackupJson = json) }
         return json
     }
@@ -1064,11 +1216,11 @@ class MxProViewModel(application: Application) : AndroidViewModel(application) {
         val es = StringsProvider.current(_uiState.value.languageOverride).isSpanish
         viewModelScope.launch {
             try {
-                val payload = repo.rtdb.moshi.adapter(GarageBackupPayload::class.java).fromJson(json)
+                val payload = repo.moshi.adapter(GarageBackupPayload::class.java).fromJson(json)
                 if (payload == null) return@launch
                 var rider = _uiState.value.currentRider
                 if (rider == null && payload.riderProfile != null) {
-                    val restoredAccount = payload.riderProfile
+                    val restoredAccount = payload.riderProfile.copy(id = currentUserId)
                     repo.saveRider(restoredAccount)
                     prefs.saveLoginState(restoredAccount.id, restoredAccount.name, "", true)
                     rider = restoredAccount
@@ -1169,6 +1321,36 @@ class MxProViewModel(application: Application) : AndroidViewModel(application) {
                     )
                 }
             }
+            val nowHb = syncedNowMs()
+            val labMaps = result.detectedColors.map { s ->
+                mapOf(
+                    "l" to s.l,
+                    "a" to s.a,
+                    "b" to s.b,
+                    "hex" to s.hex,
+                    "colorName" to s.colorName
+                )
+            }
+            val patchFields = mutableMapOf<String, Any?>(
+                "antennaId" to station.id,
+                "circuitId" to circuitId,
+                "lastSnapshotBase64" to result.snapshotBase64,
+                "lastDetectedColors" to colorNames,
+                "lastDetectedHexes" to colorHexes,
+                "lastDetectedLab" to labMaps,
+                "lastDetectedDorsal" to result.detectedDorsal,
+                "lastConfidence" to result.matchConfidence.toDouble(),
+                "activeFps" to result.estimatedFps,
+                "lastTriggerTimestampMs" to result.triggerTimestampMs,
+                "matchedRiderId" to (result.matchedProfile?.riderId ?: ""),
+                "matchedRiderName" to (result.matchedProfile?.riderName ?: ""),
+                "lastHeartbeatMs" to nowHb,
+                "isCalibrated" to true,
+                "status" to "DETECTING"
+            )
+            if (result.photoFinishBase64 != null) {
+                patchFields["lastPhotoFinishBase64"] = result.photoFinishBase64
+            }
             val patchObj = JSONObject().apply {
                 put("kind", "telemetry")
                 put("circuitId", circuitId)
@@ -1186,11 +1368,11 @@ class MxProViewModel(application: Application) : AndroidViewModel(application) {
                 put("lastTriggerTimestampMs", result.triggerTimestampMs)
                 put("matchedRiderId", result.matchedProfile?.riderId ?: "")
                 put("matchedRiderName", result.matchedProfile?.riderName ?: "")
-                put("lastHeartbeatMs", syncedNowMs())
+                put("lastHeartbeatMs", nowHb)
                 put("isCalibrated", true)
                 put("status", "DETECTING")
             }
-            val cloudOk = repo.patchAntennaTelemetry(circuitId, station.id, patchObj.toString())
+            val cloudOk = repo.patchAntennaTelemetry(circuitId, station.id, patchFields, antennaCfg)
             val lanOk = sendViaLanIfAvailable(patchObj)
 
             var capCloudOk = cloudOk
@@ -1223,13 +1405,13 @@ class MxProViewModel(application: Application) : AndroidViewModel(application) {
                 cloudOk && lanOk -> if (es) "✓ Captura enviada (Nube + Wi-Fi)" else "✓ Capture sent (Cloud + Wi-Fi)"
                 cloudOk -> if (es) "✓ Captura enviada a Dirección" else "✓ Capture sent to Director"
                 lanOk -> if (es) "✓ Captura enviada por Wi-Fi Directo" else "✓ Capture sent via Direct Wi-Fi"
-                else -> if (es) "⚠ Captura sin envío: ${repo.lastRtdbError() ?: "sin red"}" else "⚠ Not sent: ${repo.lastRtdbError() ?: "offline"}"
+                else -> if (es) "⚠ Captura sin envío: ${repo.lastCloudError() ?: "sin red"}" else "⚠ Not sent: ${repo.lastCloudError() ?: "offline"}"
             }
             _uiState.update {
                 it.copy(
                     antennaSyncOk = anySent,
                     antennaUploadCount = if (anySent) it.antennaUploadCount + 1 else it.antennaUploadCount,
-                    antennaLastSyncError = if (cloudOk) null else repo.lastRtdbError(),
+                    antennaLastSyncError = if (cloudOk) null else repo.lastCloudError(),
                     lastCaptureFeedback = feedbackText,
                     lastCaptureFeedbackAtMs = SystemClock.elapsedRealtime(),
                     lastCaptureOk = anySent
@@ -1507,13 +1689,18 @@ class MxProViewModel(application: Application) : AndroidViewModel(application) {
                 repo.pushCapturedPass(circuitId, capture)
             }
             if (result.photoFinishBase64 != null) {
-                val patch = JSONObject().apply {
-                    put("lastPhotoFinishBase64", result.photoFinishBase64)
-                    put("lastTriggerTimestampMs", result.triggerTimestampMs)
-                    put("matchedRiderId", targetRiderId)
-                    put("matchedRiderName", targetName)
-                }.toString()
-                repo.patchAntennaTelemetry(circuitId, AntennaStation.ANTENA_TEMP.id, patch)
+                val patchFields = mapOf<String, Any?>(
+                    "lastPhotoFinishBase64" to result.photoFinishBase64,
+                    "lastTriggerTimestampMs" to result.triggerTimestampMs,
+                    "matchedRiderId" to targetRiderId,
+                    "matchedRiderName" to targetName
+                )
+                repo.patchAntennaTelemetry(
+                    circuitId = circuitId,
+                    antennaId = AntennaStation.ANTENA_TEMP.id,
+                    patchFields = patchFields,
+                    fallbackConfig = _uiState.value.antennas[AntennaStation.ANTENA_TEMP.id]
+                )
             }
             recordLapForRider(targetRiderId, result.triggerTimestampMs, "solo_phone", detectedNames)
         }
@@ -1727,25 +1914,27 @@ class MxProViewModel(application: Application) : AndroidViewModel(application) {
             repo.recordLap(lap)
             repo.saveRoom(updatedRoom)
 
-            if (bike != null) {
-                repo.saveBike(
-                    bike.copy(
-                        totalLaps = bike.totalLaps + 1,
-                        usageMinutes = bike.usageMinutes + (lapMs / 60_000L).toInt().coerceAtLeast(1)
+            if (riderId == currentUserId || repo.isCurrentUserAdmin()) {
+                if (bike != null) {
+                    repo.saveBike(
+                        bike.copy(
+                            totalLaps = bike.totalLaps + 1,
+                            usageMinutes = bike.usageMinutes + (lapMs / 60_000L).toInt().coerceAtLeast(1)
+                        )
+                    )
+                }
+
+                repo.saveRider(
+                    riderAccount.copy(
+                        totalLaps = riderAccount.totalLaps + 1,
+                        bestLapMs = allBest,
+                        regularityIndex = reg,
+                        avgSpeedKmh = avgSpd,
+                        eq200mMs = eq200,
+                        lastSeenAt = passTimestampMs
                     )
                 )
             }
-
-            repo.saveRider(
-                riderAccount.copy(
-                    totalLaps = riderAccount.totalLaps + 1,
-                    bestLapMs = allBest,
-                    regularityIndex = reg,
-                    avgSpeedKmh = avgSpd,
-                    eq200mMs = eq200,
-                    lastSeenAt = passTimestampMs
-                )
-            )
             syncCircuitData(circuit.id)
         }
     }
@@ -1857,16 +2046,15 @@ class MxProViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun setPocketModeAudioActive(enabled: Boolean) {
-        val app = getApplication<Application>()
         val es = StringsProvider.current(_uiState.value.languageOverride).isSpanish
         if (enabled) {
             voiceEngine.setOutputRoute(_uiState.value.audioOutputRoute)
             PocketAudioService.start(
-                app,
+                appContext,
                 if (es) "Modo Bolsillo — Audio de pista activo" else "Pocket Mode — Track audio active"
             )
         } else {
-            PocketAudioService.stop(app)
+            PocketAudioService.stop(appContext)
         }
         _uiState.update { it.copy(pocketAudioServiceRunning = enabled) }
     }
@@ -1962,7 +2150,7 @@ class MxProViewModel(application: Application) : AndroidViewModel(application) {
             },
             onCaptureSample = { cId, json ->
                 if (cId == _uiState.value.activeCircuit.id) {
-                    val parsed = repo.rtdb.parseAntennaConfigSafe(cId, json.optString("antennaId", "antena_1"), JSONObject().apply {
+                    val parsed = repo.parseAntennaConfigFromLanJson(cId, json.optString("antennaId", "antena_1"), JSONObject().apply {
                         put("lastDetectedLab", json.optJSONArray("samples") ?: JSONArray())
                     })
                     val cap = CapturedPassSample(
@@ -2148,7 +2336,7 @@ class MxProViewModel(application: Application) : AndroidViewModel(application) {
                     antennaSyncOk = ok || lanOk,
                     antennaLastSyncError = when {
                         ok || lanOk -> null
-                        else -> (repo.lastRtdbError() ?: "RTDB write error")
+                        else -> (repo.lastCloudError() ?: "Firestore write error")
                     }
                 )
             }
@@ -2180,6 +2368,13 @@ class MxProViewModel(application: Application) : AndroidViewModel(application) {
             )
         }
         viewModelScope.launch {
+            val patchFields = mapOf<String, Any?>(
+                "antennaId" to station.id,
+                "circuitId" to circuitId,
+                "isCalibrated" to isCalibrated,
+                "status" to effectiveStatus,
+                "lastHeartbeatMs" to nowMs
+            )
             val patchObj = JSONObject().apply {
                 put("kind", "telemetry")
                 put("antennaId", station.id)
@@ -2188,7 +2383,7 @@ class MxProViewModel(application: Application) : AndroidViewModel(application) {
                 put("status", effectiveStatus)
                 put("lastHeartbeatMs", nowMs)
             }
-            val ok = repo.patchAntennaTelemetry(circuitId, station.id, patchObj.toString())
+            val ok = repo.patchAntennaTelemetry(circuitId, station.id, patchFields, _uiState.value.antennas[station.id])
             val lanOk = if (!ok) sendViaLanIfAvailable(patchObj) else false
             _uiState.update {
                 it.copy(
@@ -2197,7 +2392,7 @@ class MxProViewModel(application: Application) : AndroidViewModel(application) {
                     antennaUploadCount = if (ok || lanOk) it.antennaUploadCount + 1 else it.antennaUploadCount,
                     antennaLastSyncError = when {
                         ok || lanOk -> null
-                        else -> (repo.lastRtdbError() ?: "RTDB heartbeat failed")
+                        else -> (repo.lastCloudError() ?: "Firestore heartbeat failed")
                     }
                 )
             }
@@ -2220,6 +2415,13 @@ class MxProViewModel(application: Application) : AndroidViewModel(application) {
             )
         }
         viewModelScope.launch {
+            val patchFields = mapOf<String, Any?>(
+                "antennaId" to station.id,
+                "circuitId" to circuitId,
+                "isCalibrated" to true,
+                "status" to "ONLINE_READY",
+                "lastHeartbeatMs" to nowMs
+            )
             val patchObj = JSONObject().apply {
                 put("kind", "telemetry")
                 put("antennaId", station.id)
@@ -2228,12 +2430,12 @@ class MxProViewModel(application: Application) : AndroidViewModel(application) {
                 put("status", "ONLINE_READY")
                 put("lastHeartbeatMs", nowMs)
             }
-            val ok = repo.patchAntennaTelemetry(circuitId, station.id, patchObj.toString())
+            val ok = repo.patchAntennaTelemetry(circuitId, station.id, patchFields, _uiState.value.antennas[station.id])
             val lanOk = if (!ok) sendViaLanIfAvailable(patchObj) else false
             _uiState.update {
                 it.copy(
                     antennaSyncOk = ok || lanOk,
-                    antennaLastSyncError = if (ok || lanOk) null else repo.lastRtdbError()
+                    antennaLastSyncError = if (ok || lanOk) null else repo.lastCloudError()
                 )
             }
         }
@@ -2256,6 +2458,15 @@ class MxProViewModel(application: Application) : AndroidViewModel(application) {
             )
         }
         viewModelScope.launch {
+            val patchFields = mapOf<String, Any?>(
+                "antennaId" to station.id,
+                "circuitId" to circuitId,
+                "lastSnapshotBase64" to base64,
+                "lastHeartbeatMs" to nowMs,
+                "activeFps" to fps,
+                "isCalibrated" to isCalibrated,
+                "status" to nextStatus
+            )
             val patchObj = JSONObject().apply {
                 put("kind", "telemetry")
                 put("antennaId", station.id)
@@ -2266,7 +2477,7 @@ class MxProViewModel(application: Application) : AndroidViewModel(application) {
                 put("isCalibrated", isCalibrated)
                 put("status", nextStatus)
             }
-            val ok = repo.patchAntennaTelemetry(circuitId, station.id, patchObj.toString())
+            val ok = repo.patchAntennaTelemetry(circuitId, station.id, patchFields, _uiState.value.antennas[station.id])
             val lanOk = if (!ok) sendViaLanIfAvailable(patchObj) else false
             _uiState.update {
                 it.copy(
@@ -2275,7 +2486,7 @@ class MxProViewModel(application: Application) : AndroidViewModel(application) {
                     antennaUploadCount = if (ok || lanOk) it.antennaUploadCount + 1 else it.antennaUploadCount,
                     antennaLastSyncError = when {
                         ok || lanOk -> null
-                        else -> (repo.lastRtdbError() ?: "RTDB snapshot failed")
+                        else -> (repo.lastCloudError() ?: "Firestore snapshot failed")
                     }
                 )
             }
@@ -2659,22 +2870,22 @@ class MxProViewModel(application: Application) : AndroidViewModel(application) {
             st.copy(antennas = st.antennas + (antennaId to updated))
         }
         viewModelScope.launch {
-            val patch = JSONObject().apply {
-                put("antennaId", antennaId)
-                put("circuitId", circuitId)
-                if (detectionMode != null) put("detectionMode", detectionMode.name)
-                if (roiSize != null) put("roiSize", roiSize.name)
-                if (roiHeight != null) put("roiHeight", roiHeight.name)
-                if (lineOrientation != null) put("lineOrientation", lineOrientation.name)
-                if (linePosition != null) put("linePosition", linePosition.toDouble())
-                if (colorZoneX != null) put("colorZoneX", colorZoneX.toDouble())
-                if (colorZoneY != null) put("colorZoneY", colorZoneY.toDouble())
-                if (singleTargetColorName != null) put("singleTargetColorName", singleTargetColorName)
-                if (directionFilter != null) put("directionFilter", directionFilter.name)
-                if (aiStewardEnabled != null) put("aiStewardEnabled", aiStewardEnabled)
-                if (antiVibration != null) put("antiVibration", antiVibration.name)
-            }.toString()
-            repo.patchAntennaTelemetry(circuitId, antennaId, patch)
+            val patchFields = mutableMapOf<String, Any?>(
+                "antennaId" to antennaId,
+                "circuitId" to circuitId
+            )
+            if (detectionMode != null) patchFields["detectionMode"] = detectionMode.name
+            if (roiSize != null) patchFields["roiSize"] = roiSize.name
+            if (roiHeight != null) patchFields["roiHeight"] = roiHeight.name
+            if (lineOrientation != null) patchFields["lineOrientation"] = lineOrientation.name
+            if (linePosition != null) patchFields["linePosition"] = linePosition.toDouble()
+            if (colorZoneX != null) patchFields["colorZoneX"] = colorZoneX.toDouble()
+            if (colorZoneY != null) patchFields["colorZoneY"] = colorZoneY.toDouble()
+            if (singleTargetColorName != null) patchFields["singleTargetColorName"] = singleTargetColorName
+            if (directionFilter != null) patchFields["directionFilter"] = directionFilter.name
+            if (aiStewardEnabled != null) patchFields["aiStewardEnabled"] = aiStewardEnabled
+            if (antiVibration != null) patchFields["antiVibration"] = antiVibration.name
+            repo.patchAntennaTelemetry(circuitId, antennaId, patchFields, updated)
         }
     }
 
@@ -2682,13 +2893,13 @@ class MxProViewModel(application: Application) : AndroidViewModel(application) {
         val circuitId = _uiState.value.activeCircuit.id
         val es = StringsProvider.current(_uiState.value.languageOverride).isSpanish
         viewModelScope.launch {
-            val patch = JSONObject().apply {
-                put("antennaId", antennaId)
-                put("circuitId", circuitId)
-                put("calibrateCommandAtMs", syncedNowMs())
-                put("status", "CALIBRATING")
-            }.toString()
-            repo.patchAntennaTelemetry(circuitId, antennaId, patch)
+            val patchFields = mapOf<String, Any?>(
+                "antennaId" to antennaId,
+                "circuitId" to circuitId,
+                "calibrateCommandAtMs" to syncedNowMs(),
+                "status" to "CALIBRATING"
+            )
+            repo.patchAntennaTelemetry(circuitId, antennaId, patchFields, _uiState.value.antennas[antennaId])
             _uiState.update {
                 it.copy(
                     statusBannerMessage = if (es) "Orden de calibración enviada a $antennaId"
@@ -2899,11 +3110,19 @@ class MxProViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun toggleGlobalRegistrationOpen() {
+        val es = StringsProvider.current(_uiState.value.languageOverride).isSpanish
         viewModelScope.launch {
             val cfg = _uiState.value.globalConfig
             val updated = cfg.copy(registrationOpen = !cfg.registrationOpen)
-            repo.saveGlobalConfig(updated)
-            _uiState.update { it.copy(globalConfig = updated) }
+            if (repo.saveGlobalConfig(updated)) {
+                _uiState.update { it.copy(globalConfig = updated) }
+            } else {
+                _uiState.update {
+                    it.copy(
+                        statusBannerMessage = if (es) "Solo el administrador principal puede cambiar esta regla" else "Only main admin can modify this setting"
+                    )
+                }
+            }
         }
     }
 
@@ -2913,16 +3132,23 @@ class MxProViewModel(application: Application) : AndroidViewModel(application) {
             val cfg = _uiState.value.globalConfig
             val next = !cfg.apkDownloadLocked
             val updated = cfg.copy(apkDownloadLocked = next)
-            repo.saveGlobalConfig(updated)
-            _uiState.update {
-                it.copy(
-                    globalConfig = updated,
-                    statusBannerMessage = if (next) {
-                        if (es) "Descargas e instalaciones bloqueadas sin código" else "APK downloads & installs locked without code"
-                    } else {
-                        if (es) "Descargas e instalaciones abiertas" else "APK downloads & installs unlocked"
-                    }
-                )
+            if (repo.saveGlobalConfig(updated)) {
+                _uiState.update {
+                    it.copy(
+                        globalConfig = updated,
+                        statusBannerMessage = if (next) {
+                            if (es) "Descargas e instalaciones bloqueadas sin código" else "APK downloads & installs locked without code"
+                        } else {
+                            if (es) "Descargas e instalaciones abiertas" else "APK downloads & installs unlocked"
+                        }
+                    )
+                }
+            } else {
+                _uiState.update {
+                    it.copy(
+                        statusBannerMessage = if (es) "Se requiere cuenta de administrador (Google)" else "Admin Google account required"
+                    )
+                }
             }
         }
     }
@@ -2938,7 +3164,6 @@ class MxProViewModel(application: Application) : AndroidViewModel(application) {
             "MX-" + UUID.randomUUID().toString().take(6).uppercase()
         }
         viewModelScope.launch {
-            val cfg = repo.getGlobalConfig()
             val entry = InviteDownloadCode(
                 code = cleanCode,
                 circuitName = circuitName.trim().ifBlank { "Circuito Oficial" },
@@ -2948,13 +3173,22 @@ class MxProViewModel(application: Application) : AndroidViewModel(application) {
                 redeemedCount = 0,
                 createdAtMs = syncedNowMs()
             )
-            val updated = cfg.copy(accessCodes = cfg.accessCodes + (cleanCode to entry))
-            repo.saveGlobalConfig(updated)
-            _uiState.update {
-                it.copy(
-                    globalConfig = updated,
-                    statusBannerMessage = if (es) "Código emitido: $cleanCode" else "Code issued: $cleanCode"
-                )
+            val res = repo.saveInviteCode(entry)
+            if (res.isSuccess) {
+                val cfg = _uiState.value.globalConfig
+                val updated = cfg.copy(accessCodes = cfg.accessCodes + (cleanCode to entry))
+                _uiState.update {
+                    it.copy(
+                        globalConfig = updated,
+                        statusBannerMessage = if (es) "Código emitido: $cleanCode" else "Code issued: $cleanCode"
+                    )
+                }
+            } else {
+                _uiState.update {
+                    it.copy(
+                        statusBannerMessage = if (es) "Error creando código: requiere cuenta Admin" else "Failed creating code: Admin account required"
+                    )
+                }
             }
         }
     }
@@ -2963,20 +3197,21 @@ class MxProViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch {
             val cfg = _uiState.value.globalConfig
             val existing = cfg.accessCodes[code] ?: return@launch
-            val updated = cfg.copy(
-                accessCodes = cfg.accessCodes + (code to existing.copy(active = !existing.active))
-            )
-            repo.saveGlobalConfig(updated)
-            _uiState.update { it.copy(globalConfig = updated) }
+            val toggled = existing.copy(active = !existing.active)
+            if (repo.saveInviteCode(toggled).isSuccess) {
+                val updated = cfg.copy(accessCodes = cfg.accessCodes + (code to toggled))
+                _uiState.update { it.copy(globalConfig = updated) }
+            }
         }
     }
 
     fun deleteInviteCode(code: String) {
         viewModelScope.launch {
             val cfg = _uiState.value.globalConfig
-            val updated = cfg.copy(accessCodes = cfg.accessCodes - code)
-            repo.saveGlobalConfig(updated)
-            _uiState.update { it.copy(globalConfig = updated) }
+            if (repo.deleteInviteCode(code).isSuccess) {
+                val updated = cfg.copy(accessCodes = cfg.accessCodes - code)
+                _uiState.update { it.copy(globalConfig = updated) }
+            }
         }
     }
 
@@ -2985,11 +3220,9 @@ class MxProViewModel(application: Application) : AndroidViewModel(application) {
         val clean = rawCode.trim().uppercase()
         if (clean.isBlank()) return
         viewModelScope.launch {
-            val cfg = repo.getGlobalConfig()
-            val match = cfg.accessCodes[clean] ?: cfg.accessCodes.values.firstOrNull {
-                it.code.equals(clean, ignoreCase = true)
-            }
-            if (match == null || !match.active) {
+            val res = repo.redeemInviteCode(clean)
+            val updatedMatch = res.getOrNull()
+            if (updatedMatch == null || !updatedMatch.active) {
                 _uiState.update {
                     it.copy(
                         statusBannerMessage = if (es) "Código inválido o desactivado" else "Invalid or disabled code"
@@ -2997,47 +3230,45 @@ class MxProViewModel(application: Application) : AndroidViewModel(application) {
                 }
                 return@launch
             }
-            val updatedMatch = match.copy(redeemedCount = match.redeemedCount + 1)
-            val updatedCfg = cfg.copy(accessCodes = cfg.accessCodes + (match.code to updatedMatch))
-            repo.saveGlobalConfig(updatedCfg)
-            prefs.markInstallUnlocked(match.code)
+            prefs.markInstallUnlocked(updatedMatch.code)
 
             var updatedCircuits = _uiState.value.circuits
             var activeCirc = _uiState.value.activeCircuit
-            if (match.promoteOfficial && match.circuitName.isNotBlank()) {
+            if (updatedMatch.promoteOfficial && updatedMatch.circuitName.isNotBlank()) {
                 val existingCirc = updatedCircuits.firstOrNull {
-                    it.name.equals(match.circuitName, ignoreCase = true)
+                    it.name.equals(updatedMatch.circuitName, ignoreCase = true)
                 }
                 if (existingCirc != null) {
                     val official = existingCirc.copy(isOfficial = true)
-                    repo.saveCircuit(official)
+                    repo.saveCircuit(official, officialCodeUsed = updatedMatch.code)
                     activeCirc = official
                 } else {
                     val official = Circuit(
                         id = "official_${UUID.randomUUID().toString().take(8)}",
-                        name = match.circuitName,
-                        countryCity = if (match.note.isNotBlank()) match.note else "Circuito Oficial",
+                        name = updatedMatch.circuitName,
+                        countryCity = if (updatedMatch.note.isNotBlank()) updatedMatch.note else "Circuito Oficial",
                         surface = SurfaceType.MX,
                         lengthMeters = 185,
                         layoutType = LayoutType.MIXED,
                         isOfficial = true
                     )
-                    repo.saveCircuit(official)
+                    repo.saveCircuit(official, officialCodeUsed = updatedMatch.code)
                     activeCirc = official
                 }
                 updatedCircuits = repo.getCircuits()
             }
 
             _uiState.update {
+                val cfg = it.globalConfig
                 it.copy(
-                    globalConfig = updatedCfg,
+                    globalConfig = cfg.copy(accessCodes = cfg.accessCodes + (updatedMatch.code to updatedMatch)),
                     installCodeUnlocked = true,
                     circuits = updatedCircuits,
                     activeCircuit = activeCirc,
                     statusBannerMessage = if (es) {
-                        "Código aceptado (${match.code})${if (match.promoteOfficial) " • Circuito Oficial activo" else ""}"
+                        "Código aceptado (${updatedMatch.code})${if (updatedMatch.promoteOfficial) " • Circuito Oficial activo" else ""}"
                     } else {
-                        "Code accepted (${match.code})${if (match.promoteOfficial) " • Official Circuit active" else ""}"
+                        "Code accepted (${updatedMatch.code})${if (updatedMatch.promoteOfficial) " • Official Circuit active" else ""}"
                     }
                 )
             }
@@ -3130,7 +3361,7 @@ class MxProViewModel(application: Application) : AndroidViewModel(application) {
     override fun onCleared() {
         super.onCleared()
         lanBridge.stopDirectorServer()
-        PocketAudioService.stop(getApplication())
+        PocketAudioService.stop(appContext)
         voiceEngine.release()
     }
 }

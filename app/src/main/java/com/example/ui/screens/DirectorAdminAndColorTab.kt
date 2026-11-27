@@ -30,6 +30,7 @@ import androidx.compose.material.icons.filled.Key
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.Mail
 import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.FilterChip
@@ -533,25 +534,41 @@ fun DirectorClubAdminTab(
             .padding(16.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
-        val rtdbErr = state.lastRtdbError ?: state.antennaLastSyncError
-        if (rtdbErr?.contains("401") == true) {
-            GlassRaceCard(accentBorder = mx.racingRed) {
-                Column(modifier = Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                    Text(
-                        text = if (strings.isSpanish) "⚠ Error Nube Firebase RTDB (HTTP 401)" else "⚠ Firebase RTDB Cloud Error (HTTP 401)",
-                        style = MaterialTheme.typography.titleMedium,
-                        color = mx.racingRed,
-                        fontWeight = FontWeight.Bold
-                    )
-                    Text(
-                        text = if (strings.isSpanish) {
-                            "Las reglas públicas de prueba en Firebase Realtime Database han caducado o están bloqueadas. Abre Firebase Console -> Realtime Database -> Reglas y publica {\".read\": true, \".write\": true} para restaurar sincronización global de cuentas, antenas y live timing."
+        val cloudErr = state.lastCloudError ?: state.antennaLastSyncError
+        GlassRaceCard(accentBorder = if (cloudErr != null || !state.isOnline) mx.racingRed else mx.telemetryGreen) {
+            Column(modifier = Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text(
+                    text = if (state.isOnline && cloudErr == null) {
+                        if (strings.isSpanish) "✓ Cloud Firestore Sincronizado Automáticamente" else "✓ Cloud Firestore Auto-Synced"
+                    } else {
+                        if (strings.isSpanish) "⚠ Estado Cloud Firestore" else "⚠ Cloud Firestore Status"
+                    },
+                    style = MaterialTheme.typography.titleMedium,
+                    color = if (state.isOnline && cloudErr == null) mx.telemetryGreen else mx.racingRed,
+                    fontWeight = FontWeight.Bold
+                )
+                Text(
+                    text = if (state.isOnline && cloudErr == null) {
+                        if (strings.isSpanish) {
+                            "Sincronización automática activa en tiempo real con Google Sign-In (${state.userEmail ?: "conectado"})."
                         } else {
-                            "Firebase Realtime Database test rules expired or denied access. Open Firebase Console -> Realtime Database -> Rules and publish {\".read\": true, \".write\": true} to restore global cloud sync."
-                        },
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = mx.subtleText
-                    )
+                            "Automatic real-time cloud sync active with Google Sign-In (${state.userEmail ?: "signed in"})."
+                        }
+                    } else {
+                        cloudErr ?: (if (strings.isSpanish) "Esperando reconexión a Cloud Firestore..." else "Waiting to reconnect to Cloud Firestore...")
+                    },
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = mx.subtleText
+                )
+                Mx3dButton(
+                    onClick = { viewModel.retryCloudConnection() },
+                    containerColor = mx.telemetryGreen,
+                    contentColor = contrastTextOn(mx.telemetryGreen),
+                    modifier = Modifier.fillMaxWidth().testTag("retry_cloud_button")
+                ) {
+                    Icon(Icons.Default.Refresh, contentDescription = null, modifier = Modifier.size(16.dp))
+                    Spacer(Modifier.width(6.dp))
+                    Text(if (strings.isSpanish) "Reintentar Nube" else "Retry Cloud")
                 }
             }
         }

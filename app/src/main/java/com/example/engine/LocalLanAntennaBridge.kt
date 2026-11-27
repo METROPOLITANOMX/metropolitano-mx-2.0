@@ -22,7 +22,7 @@ import okhttp3.RequestBody.Companion.toRequestBody
 /**
  * Zero-permission Local Wi-Fi / Hotspot LAN Relay so Director & Antenna
  * sync camera frames, lap detections, and remote antenna settings directly on the same
- * Wi-Fi or Mobile Hotspot even if cloud Firebase RTDB returns HTTP 401.
+ * Wi-Fi or Mobile Hotspot even when Cloud Firestore is temporarily offline.
  */
 class LocalLanAntennaBridge {
 

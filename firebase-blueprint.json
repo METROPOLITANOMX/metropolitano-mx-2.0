@@ -1,0 +1,418 @@
+{
+  "entities": {
+    "UserProfile": {
+      "title": "UserProfile",
+      "description": "Private Google-authenticated user profile stored under /users/{userId}.",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string", "description": "Firebase Auth UID matching document ID." },
+        "displayName": { "type": "string", "description": "Google account display name." },
+        "email": { "type": "string", "description": "Google account email." },
+        "createdAt": { "type": "string", "format": "date-time", "description": "Server timestamp on creation." },
+        "updatedAt": { "type": "string", "format": "date-time", "description": "Server timestamp on update." }
+      },
+      "required": ["userId", "displayName", "createdAt", "updatedAt"]
+    },
+    "GlobalConfig": {
+      "title": "GlobalConfig",
+      "description": "Admin-managed global club configuration stored at /app_config/global.",
+      "type": "object",
+      "properties": {
+        "registrationOpen": { "type": "boolean" },
+        "apkDownloadLocked": { "type": "boolean" },
+        "apkDownloadUrl": { "type": "string" },
+        "directorPasswordHash": { "type": "string" },
+        "directorCustomPasswordSet": { "type": "boolean" },
+        "ownerUid": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["registrationOpen", "apkDownloadLocked", "apkDownloadUrl", "directorPasswordHash", "directorCustomPasswordSet", "ownerUid", "createdAt", "updatedAt"]
+    },
+    "AppTelemetry": {
+      "title": "AppTelemetry",
+      "description": "Shared visit counter telemetry stored at /app_config/telemetry.",
+      "type": "object",
+      "properties": {
+        "visitCount": { "type": "integer" },
+        "lastVisits": { "type": "array" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["visitCount", "lastVisits", "updatedAt"]
+    },
+    "InviteCode": {
+      "title": "InviteCode",
+      "description": "Invite / official circuit activation code issued by Director.",
+      "type": "object",
+      "properties": {
+        "code": { "type": "string" },
+        "circuitName": { "type": "string" },
+        "note": { "type": "string" },
+        "promoteOfficial": { "type": "boolean" },
+        "active": { "type": "boolean" },
+        "redeemedCount": { "type": "integer" },
+        "ownerUid": { "type": "string" },
+        "createdAtMs": { "type": "integer" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["code", "circuitName", "promoteOfficial", "active", "redeemedCount", "ownerUid", "createdAtMs", "createdAt", "updatedAt"]
+    },
+    "RiderAccount": {
+      "title": "RiderAccount",
+      "description": "Public pilot racing profile and stats (no PII or passwords), keyed by UID.",
+      "type": "object",
+      "properties": {
+        "ownerUid": { "type": "string" },
+        "name": { "type": "string" },
+        "status": { "type": "string", "enum": ["ACTIVE", "BLOCKED"] },
+        "totalLaps": { "type": "integer" },
+        "bestLapMs": { "type": "integer" },
+        "regularityIndex": { "type": "number" },
+        "avgSpeedKmh": { "type": "number" },
+        "eq200mMs": { "type": "integer" },
+        "activeBikeId": { "type": "string" },
+        "preferredSurface": { "type": "string", "enum": ["MX", "SM"] },
+        "createdAtMs": { "type": "integer" },
+        "lastSeenAtMs": { "type": "integer" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["ownerUid", "name", "status", "totalLaps", "bestLapMs", "regularityIndex", "avgSpeedKmh", "eq200mMs", "activeBikeId", "preferredSurface", "createdAtMs", "lastSeenAtMs", "createdAt", "updatedAt"]
+    },
+    "BikeSetup": {
+      "title": "BikeSetup",
+      "description": "Losi Promoto bike setup stored in /bikes/{bikeId}.",
+      "type": "object",
+      "properties": {
+        "ownerUid": { "type": "string" },
+        "riderId": { "type": "string" },
+        "riderName": { "type": "string" },
+        "discipline": { "type": "string", "enum": ["MX", "SM"] },
+        "modelName": { "type": "string" },
+        "dorsal": { "type": "string" },
+        "totalLaps": { "type": "integer" },
+        "usageMinutes": { "type": "integer" },
+        "chainMaintAtLaps": { "type": "integer" },
+        "gyroMaintAtLaps": { "type": "integer" },
+        "forkMaintAtLaps": { "type": "integer" },
+        "bearingMaintAtLaps": { "type": "integer" },
+        "terrain": { "type": "string" },
+        "forkOil": { "type": "string" },
+        "forkSpring": { "type": "string" },
+        "shockOil": { "type": "string" },
+        "shockSpring": { "type": "string" },
+        "rearSagMm": { "type": "string" },
+        "leanBarSetting": { "type": "string" },
+        "frontBrakePercent": { "type": "integer" },
+        "servoSaverSetting": { "type": "string" },
+        "gyroPercent": { "type": "integer" },
+        "gyroMode": { "type": "string" },
+        "escPunch": { "type": "integer" },
+        "escDragBrake": { "type": "integer" },
+        "escMaxBrake": { "type": "integer" },
+        "throttleExpo": { "type": "integer" },
+        "lipoCutoff": { "type": "string" },
+        "pinionTeeth": { "type": "integer" },
+        "spurTeeth": { "type": "integer" },
+        "pinionSpur": { "type": "string" },
+        "frontTire": { "type": "string" },
+        "rearTire": { "type": "string" },
+        "tires": { "type": "string" },
+        "tireInsert": { "type": "string" },
+        "lipoSpecs": { "type": "string" },
+        "lipoCycles": { "type": "integer" },
+        "notes": { "type": "string" },
+        "setupVotes": { "type": "integer" },
+        "votedByRiderIds": { "type": "array" },
+        "photoBase64List": { "type": "array" },
+        "publishedToPaddock": { "type": "boolean" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["ownerUid", "riderId", "riderName", "discipline", "modelName", "dorsal", "totalLaps", "usageMinutes", "setupVotes", "votedByRiderIds", "photoBase64List", "publishedToPaddock", "createdAt", "updatedAt"]
+    },
+    "Circuit": {
+      "title": "Circuit",
+      "description": "Official or local racing circuit definition.",
+      "type": "object",
+      "properties": {
+        "ownerUid": { "type": "string" },
+        "visibility": { "type": "string", "enum": ["PUBLIC"] },
+        "name": { "type": "string" },
+        "countryCity": { "type": "string" },
+        "surface": { "type": "string", "enum": ["MX", "SM"] },
+        "lengthMeters": { "type": "integer" },
+        "layoutType": { "type": "string", "enum": ["MIXED", "FAST", "TECHNICAL"] },
+        "lat": { "type": "number" },
+        "lng": { "type": "number" },
+        "timezone": { "type": "string" },
+        "gpsRadiusMeters": { "type": "integer" },
+        "isOfficial": { "type": "boolean" },
+        "officialCodeUsed": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["ownerUid", "visibility", "name", "countryCity", "surface", "lengthMeters", "layoutType", "lat", "lng", "timezone", "gpsRadiusMeters", "isOfficial", "createdAt", "updatedAt"]
+    },
+    "RoomStateDoc": {
+      "title": "RoomStateDoc",
+      "description": "Live session and race control state for a circuit.",
+      "type": "object",
+      "properties": {
+        "circuitId": { "type": "string" },
+        "gameMode": { "type": "string", "enum": ["NORMAL", "TIME_BOMB_45", "ELIMINATION_60", "KING_OF_TRACK", "CONSISTENCY_DUEL", "TURBO_SPRINT_3", "PURSUIT_HUNTER"] },
+        "sessionPhase": { "type": "string", "enum": ["IDLE", "WARMUP", "COUNTDOWN_30", "RANDOM_GATE", "RACING", "PAUSED_YELLOW"] },
+        "flagState": { "type": "string", "enum": ["GREEN", "YELLOW"] },
+        "heatDurationSec": { "type": "integer" },
+        "phaseStartTimeMs": { "type": "integer" },
+        "phaseEndTimeMs": { "type": "integer" },
+        "gateDropTimeMs": { "type": "integer" },
+        "friendlyModeActive": { "type": "boolean" },
+        "lipoWarnMinutes": { "type": "integer" },
+        "antiVibration": { "type": "string", "enum": ["HIGH", "MEDIUM", "LOW_WIND"] },
+        "weeklyHotlapRider": { "type": "string" },
+        "weeklyHotlapMs": { "type": "integer" },
+        "mxRecordRider": { "type": "string" },
+        "mxRecordMs": { "type": "integer" },
+        "smRecordRider": { "type": "string" },
+        "smRecordMs": { "type": "integer" },
+        "lastPaAnnouncement": { "type": "object" },
+        "lastAiVerdict": { "type": "object" },
+        "updatedAtMs": { "type": "integer" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["circuitId", "gameMode", "sessionPhase", "flagState", "heatDurationSec", "phaseStartTimeMs", "phaseEndTimeMs", "gateDropTimeMs", "friendlyModeActive", "lipoWarnMinutes", "antiVibration", "updatedAtMs", "updatedAt"]
+    },
+    "ActiveRoomRider": {
+      "title": "ActiveRoomRider",
+      "description": "Active rider enrolled on the track grid for a circuit.",
+      "type": "object",
+      "properties": {
+        "circuitId": { "type": "string" },
+        "ownerUid": { "type": "string" },
+        "riderId": { "type": "string" },
+        "riderName": { "type": "string" },
+        "dorsal": { "type": "string" },
+        "bikeModel": { "type": "string" },
+        "discipline": { "type": "string", "enum": ["MX", "SM"] },
+        "lapsCount": { "type": "integer" },
+        "bestLapMs": { "type": "integer" },
+        "lastLapMs": { "type": "integer" },
+        "lastPassTimestampMs": { "type": "integer" },
+        "setupSummary": { "type": "string" },
+        "colorConfirmed": { "type": "boolean" },
+        "eliminated": { "type": "boolean" },
+        "sessionStartMs": { "type": "integer" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["circuitId", "ownerUid", "riderId", "riderName", "dorsal", "bikeModel", "discipline", "lapsCount", "bestLapMs", "lastLapMs", "lastPassTimestampMs", "colorConfirmed", "eliminated", "sessionStartMs", "updatedAt"]
+    },
+    "AntennaConfig": {
+      "title": "AntennaConfig",
+      "description": "Vision antenna configuration and live telemetry.",
+      "type": "object",
+      "properties": {
+        "antennaId": { "type": "string" },
+        "circuitId": { "type": "string" },
+        "status": { "type": "string" },
+        "isCalibrated": { "type": "boolean" },
+        "calibrateCommandAtMs": { "type": "integer" },
+        "detectionMode": { "type": "string", "enum": ["ANY_PASS", "FAIRING_COLOR", "SINGLE_COLOR"] },
+        "roiSize": { "type": "string", "enum": ["S", "M", "L"] },
+        "roiHeight": { "type": "string", "enum": ["LOW", "MEDIUM", "HIGH"] },
+        "lineOrientation": { "type": "string", "enum": ["VERTICAL", "HORIZONTAL"] },
+        "linePosition": { "type": "number" },
+        "colorZoneX": { "type": "number" },
+        "colorZoneY": { "type": "number" },
+        "singleTargetColorName": { "type": "string" },
+        "directionFilter": { "type": "string", "enum": ["ANY", "LEFT_TO_RIGHT", "RIGHT_TO_LEFT", "TOP_TO_BOTTOM", "BOTTOM_TO_TOP"] },
+        "aiStewardEnabled": { "type": "boolean" },
+        "antiVibration": { "type": "string", "enum": ["HIGH", "MEDIUM", "LOW_WIND"] },
+        "lastSnapshotBase64": { "type": "string" },
+        "lastPhotoFinishBase64": { "type": "string" },
+        "lastDetectedColors": { "type": "array" },
+        "lastDetectedHexes": { "type": "array" },
+        "lastDetectedLab": { "type": "array" },
+        "lastDetectedDorsal": { "type": "string" },
+        "lastConfidence": { "type": "number" },
+        "activeFps": { "type": "integer" },
+        "lastTriggerTimestampMs": { "type": "integer" },
+        "matchedRiderId": { "type": "string" },
+        "matchedRiderName": { "type": "string" },
+        "lastHeartbeatMs": { "type": "integer" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["antennaId", "circuitId", "status", "isCalibrated", "detectionMode", "lastHeartbeatMs", "updatedAt"]
+    },
+    "LapRecord": {
+      "title": "LapRecord",
+      "description": "Recorded lap timing event on a circuit.",
+      "type": "object",
+      "properties": {
+        "ownerUid": { "type": "string" },
+        "circuitId": { "type": "string" },
+        "riderId": { "type": "string" },
+        "riderName": { "type": "string" },
+        "dorsal": { "type": "string" },
+        "bikeModel": { "type": "string" },
+        "discipline": { "type": "string", "enum": ["MX", "SM"] },
+        "lapTimeMs": { "type": "integer" },
+        "deltaMs": { "type": "integer" },
+        "speedKmh": { "type": "number" },
+        "timestampMs": { "type": "integer" },
+        "antennaId": { "type": "string" },
+        "detectedColors": { "type": "array" },
+        "dayKey": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["ownerUid", "circuitId", "riderId", "riderName", "dorsal", "bikeModel", "discipline", "lapTimeMs", "deltaMs", "speedKmh", "timestampMs", "antennaId", "detectedColors", "dayKey", "createdAt"]
+    },
+    "RiderColorProfile": {
+      "title": "RiderColorProfile",
+      "description": "CIE Lab fairing color profile for a rider in a circuit.",
+      "type": "object",
+      "properties": {
+        "circuitId": { "type": "string" },
+        "riderId": { "type": "string" },
+        "riderName": { "type": "string" },
+        "samples": { "type": "array" },
+        "confirmed": { "type": "boolean" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["circuitId", "riderId", "riderName", "samples", "confirmed", "updatedAt"]
+    },
+    "CapturedPassSample": {
+      "title": "CapturedPassSample",
+      "description": "Captured pass color/snapshot sample from an antenna.",
+      "type": "object",
+      "properties": {
+        "ownerUid": { "type": "string" },
+        "circuitId": { "type": "string" },
+        "timestampMs": { "type": "integer" },
+        "antennaId": { "type": "string" },
+        "samples": { "type": "array" },
+        "snapshotBase64": { "type": "string" },
+        "detectedDorsal": { "type": "string" },
+        "aiSummary": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["ownerUid", "circuitId", "timestampMs", "antennaId", "samples", "createdAt"]
+    },
+    "Championship": {
+      "title": "Championship",
+      "description": "MXGP championship standings for a circuit.",
+      "type": "object",
+      "properties": {
+        "ownerUid": { "type": "string" },
+        "circuitId": { "type": "string" },
+        "name": { "type": "string" },
+        "discipline": { "type": "string", "enum": ["MX", "SM"] },
+        "totalHeats": { "type": "integer" },
+        "completedHeats": { "type": "integer" },
+        "standings": { "type": "object" },
+        "createdAtMs": { "type": "integer" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["ownerUid", "circuitId", "name", "discipline", "totalHeats", "completedHeats", "standings", "createdAtMs", "createdAt", "updatedAt"]
+    },
+    "FanInteractionState": {
+      "title": "FanInteractionState",
+      "description": "Live fan ovations, MVP votes, cheers, bets, and PA audio clip.",
+      "type": "object",
+      "properties": {
+        "circuitId": { "type": "string" },
+        "bets": { "type": "object" },
+        "mvpVotes": { "type": "object" },
+        "ovationCount": { "type": "integer" },
+        "cheerMessages": { "type": "array" },
+        "paClipBase64": { "type": "string" },
+        "paClipTimestampMs": { "type": "integer" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["circuitId", "bets", "mvpVotes", "ovationCount", "cheerMessages", "paClipTimestampMs", "updatedAt"]
+    },
+    "AppReport": {
+      "title": "AppReport",
+      "description": "User inbox report or official circuit request.",
+      "type": "object",
+      "properties": {
+        "ownerUid": { "type": "string" },
+        "senderName": { "type": "string" },
+        "type": { "type": "string" },
+        "message": { "type": "string" },
+        "circuitRequested": { "type": "string" },
+        "timestampMs": { "type": "integer" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["ownerUid", "senderName", "type", "message", "timestampMs", "createdAt"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": { "$ref": "#/entities/UserProfile" },
+      "description": "Private Google-authenticated user profile."
+    },
+    "/app_config/global": {
+      "schema": { "$ref": "#/entities/GlobalConfig" },
+      "description": "Global club configuration managed by admins."
+    },
+    "/app_config/telemetry": {
+      "schema": { "$ref": "#/entities/AppTelemetry" },
+      "description": "Shared visit telemetry counter."
+    },
+    "/invite_codes/{codeId}": {
+      "schema": { "$ref": "#/entities/InviteCode" },
+      "description": "Invite / download / official circuit codes."
+    },
+    "/riders/{riderId}": {
+      "schema": { "$ref": "#/entities/RiderAccount" },
+      "description": "Pilot profiles and global ranking stats."
+    },
+    "/bikes/{bikeId}": {
+      "schema": { "$ref": "#/entities/BikeSetup" },
+      "description": "User bike setups and public Paddock builds."
+    },
+    "/circuits/{circuitId}": {
+      "schema": { "$ref": "#/entities/Circuit" },
+      "description": "Official and local racing circuits."
+    },
+    "/circuits/{circuitId}/live/room": {
+      "schema": { "$ref": "#/entities/RoomStateDoc" },
+      "description": "Live race room state for a circuit."
+    },
+    "/circuits/{circuitId}/live/fan": {
+      "schema": { "$ref": "#/entities/FanInteractionState" },
+      "description": "Live fan club interactions for a circuit."
+    },
+    "/circuits/{circuitId}/active_riders/{riderId}": {
+      "schema": { "$ref": "#/entities/ActiveRoomRider" },
+      "description": "Active riders on track for a circuit."
+    },
+    "/circuits/{circuitId}/antennas/{antennaId}": {
+      "schema": { "$ref": "#/entities/AntennaConfig" },
+      "description": "Vision antennas for a circuit."
+    },
+    "/circuits/{circuitId}/laps/{lapId}": {
+      "schema": { "$ref": "#/entities/LapRecord" },
+      "description": "Lap telemetry history for a circuit."
+    },
+    "/circuits/{circuitId}/color_profiles/{riderId}": {
+      "schema": { "$ref": "#/entities/RiderColorProfile" },
+      "description": "Rider CIE Lab fairing color profiles for a circuit."
+    },
+    "/circuits/{circuitId}/color_captures/{captureId}": {
+      "schema": { "$ref": "#/entities/CapturedPassSample" },
+      "description": "Captured pass samples for a circuit."
+    },
+    "/circuits/{circuitId}/championships/{champId}": {
+      "schema": { "$ref": "#/entities/Championship" },
+      "description": "MXGP championships for a circuit."
+    },
+    "/reports/{reportId}": {
+      "schema": { "$ref": "#/entities/AppReport" },
+      "description": "Bug reports and official circuit requests."
+    }
+  }
+}

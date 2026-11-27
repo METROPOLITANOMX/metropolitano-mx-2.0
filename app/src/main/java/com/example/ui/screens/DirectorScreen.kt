@@ -950,7 +950,7 @@ private fun DirectorAntennaCameraPreviewCard(
             }
         }
 
-        val rtdbBlocked = (state.lastRtdbError ?: state.antennaLastSyncError)?.contains("401") == true
+        val cloudErr = state.lastCloudError ?: state.antennaLastSyncError
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.SpaceBetween,
@@ -970,16 +970,16 @@ private fun DirectorAntennaCameraPreviewCard(
                     )
                 }
                 Text(
-                    text = if (rtdbBlocked) {
-                        if (strings.isSpanish) "Nube Firebase: Reglas RTDB 401 (usa Wi-Fi Directo o abre Admin Club)"
-                        else "Firebase Cloud: RTDB Rules 401 (use Direct Wi-Fi or see Club Admin)"
-                    } else if (state.isOnline) {
-                        if (strings.isSpanish) "Nube Firebase: Conectada" else "Firebase Cloud: Online"
-                    } else {
-                        if (strings.isSpanish) "Nube Firebase: Sin conexión (Wi-Fi Directo activo)" else "Firebase Cloud: Offline (Direct Wi-Fi active)"
+                    text = when {
+                        state.isOnline && cloudErr == null ->
+                            if (strings.isSpanish) "Cloud Firestore: Conectado en tiempo real" else "Cloud Firestore: Live Connected"
+                        cloudErr != null ->
+                            if (strings.isSpanish) "Cloud Firestore: $cloudErr" else "Cloud Firestore: $cloudErr"
+                        else ->
+                            if (strings.isSpanish) "Cloud Firestore: Sin conexión (Wi-Fi Directo activo)" else "Cloud Firestore: Offline (Direct Wi-Fi active)"
                     },
                     style = MaterialTheme.typography.labelSmall,
-                    color = if (state.isOnline && !rtdbBlocked) mx.telemetryGreen else mx.goldBright,
+                    color = if (state.isOnline && cloudErr == null) mx.telemetryGreen else mx.goldBright,
                     maxLines = 1
                 )
             }

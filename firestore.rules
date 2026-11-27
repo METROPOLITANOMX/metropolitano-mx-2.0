@@ -1,0 +1,509 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Global safety net: deny everything by default
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() >= 1 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isAdmin() {
+      return isSignedIn() && (
+        exists(/databases/$(database)/documents/admins/$(request.auth.uid)) ||
+        (('email_verified' in request.auth.token) &&
+         request.auth.token.email_verified == true &&
+         ('email' in request.auth.token) &&
+         request.auth.token.email == 'richibikergsx@gmail.com')
+      );
+    }
+
+    function isValidSurface(val) {
+      return val in ['MX', 'SM'];
+    }
+
+    function isValidUserProfile(data) {
+      return data.userId is string && data.userId.size() >= 1 && data.userId.size() <= 128 &&
+             data.displayName is string && data.displayName.size() >= 1 && data.displayName.size() <= 80 &&
+             (!('email' in data) || (data.email is string && data.email.size() <= 160)) &&
+             data.createdAt is timestamp && data.createdAt <= request.time &&
+             data.updatedAt is timestamp && data.updatedAt <= request.time;
+    }
+
+    function isValidGlobalConfig(data) {
+      return data.registrationOpen is bool &&
+             data.apkDownloadLocked is bool &&
+             data.apkDownloadUrl is string && data.apkDownloadUrl.size() <= 300 &&
+             data.directorPasswordHash is string && data.directorPasswordHash.size() >= 16 && data.directorPasswordHash.size() <= 128 &&
+             data.directorCustomPasswordSet is bool &&
+             data.ownerUid is string && data.ownerUid.size() <= 128 &&
+             data.createdAt is timestamp && data.createdAt <= request.time &&
+             data.updatedAt is timestamp && data.updatedAt <= request.time;
+    }
+
+    function isValidTelemetry(data) {
+      return data.visitCount is int && data.visitCount >= 0 && data.visitCount <= 100000000 &&
+             data.lastVisits is list && data.lastVisits.size() <= 25 &&
+             (data.lastVisits.size() == 0 || data.lastVisits[0] is string) &&
+             data.updatedAt is timestamp && data.updatedAt <= request.time;
+    }
+
+    function isValidInviteCode(data) {
+      return data.code is string && data.code.size() >= 2 && data.code.size() <= 40 &&
+             data.circuitName is string && data.circuitName.size() >= 1 && data.circuitName.size() <= 100 &&
+             (!('note' in data) || (data.note is string && data.note.size() <= 200)) &&
+             data.promoteOfficial is bool &&
+             data.active is bool &&
+             data.redeemedCount is int && data.redeemedCount >= 0 && data.redeemedCount <= 1000000 &&
+             data.ownerUid is string && data.ownerUid.size() <= 128 &&
+             data.createdAtMs is int && data.createdAtMs >= 0 &&
+             data.createdAt is timestamp && data.createdAt <= request.time &&
+             data.updatedAt is timestamp && data.updatedAt <= request.time;
+    }
+
+    function isValidRider(data) {
+      return data.ownerUid is string && data.ownerUid.size() >= 1 && data.ownerUid.size() <= 128 &&
+             data.name is string && data.name.size() >= 1 && data.name.size() <= 60 &&
+             data.status in ['ACTIVE', 'BLOCKED'] &&
+             data.totalLaps is int && data.totalLaps >= 0 &&
+             data.bestLapMs is int && data.bestLapMs >= 0 &&
+             data.regularityIndex is number && data.regularityIndex >= 0 && data.regularityIndex <= 100 &&
+             data.avgSpeedKmh is number && data.avgSpeedKmh >= 0 &&
+             data.eq200mMs is int && data.eq200mMs >= 0 &&
+             data.activeBikeId is string && data.activeBikeId.size() <= 128 &&
+             isValidSurface(data.preferredSurface) &&
+             data.createdAtMs is int && data.createdAtMs >= 0 &&
+             data.lastSeenAtMs is int && data.lastSeenAtMs >= 0 &&
+             data.createdAt is timestamp && data.createdAt <= request.time &&
+             data.updatedAt is timestamp && data.updatedAt <= request.time;
+    }
+
+    function isValidBike(data) {
+      return data.ownerUid is string && data.ownerUid.size() >= 1 && data.ownerUid.size() <= 128 &&
+             data.riderId is string && data.riderId.size() >= 1 && data.riderId.size() <= 128 &&
+             data.riderName is string && data.riderName.size() >= 1 && data.riderName.size() <= 60 &&
+             isValidSurface(data.discipline) &&
+             data.modelName is string && data.modelName.size() >= 1 && data.modelName.size() <= 80 &&
+             data.dorsal is string && data.dorsal.size() >= 1 && data.dorsal.size() <= 16 &&
+             data.totalLaps is int && data.totalLaps >= 0 &&
+             data.usageMinutes is int && data.usageMinutes >= 0 &&
+             data.setupVotes is int && data.setupVotes >= 0 &&
+             data.votedByRiderIds is list && data.votedByRiderIds.size() <= 200 &&
+             (data.votedByRiderIds.size() == 0 || data.votedByRiderIds[0] is string) &&
+             data.photoBase64List is list && data.photoBase64List.size() <= 3 &&
+             (data.photoBase64List.size() == 0 || data.photoBase64List[0] is string) &&
+             data.publishedToPaddock is bool &&
+             (!('notes' in data) || (data.notes is string && data.notes.size() <= 600)) &&
+             data.createdAt is timestamp && data.createdAt <= request.time &&
+             data.updatedAt is timestamp && data.updatedAt <= request.time;
+    }
+
+    function isValidCircuit(data) {
+      return data.ownerUid is string && data.ownerUid.size() >= 1 && data.ownerUid.size() <= 128 &&
+             data.visibility == 'PUBLIC' &&
+             data.name is string && data.name.size() >= 2 && data.name.size() <= 100 &&
+             data.countryCity is string && data.countryCity.size() <= 100 &&
+             isValidSurface(data.surface) &&
+             data.lengthMeters is int && data.lengthMeters >= 10 && data.lengthMeters <= 50000 &&
+             data.layoutType in ['MIXED', 'FAST', 'TECHNICAL'] &&
+             data.lat is number && data.lng is number &&
+             data.timezone is string && data.timezone.size() <= 80 &&
+             data.gpsRadiusMeters is int && data.gpsRadiusMeters >= 20 && data.gpsRadiusMeters <= 50000 &&
+             data.isOfficial is bool &&
+             (!('officialCodeUsed' in data) || (data.officialCodeUsed is string && data.officialCodeUsed.size() <= 40)) &&
+             data.createdAt is timestamp && data.createdAt <= request.time &&
+             data.updatedAt is timestamp && data.updatedAt <= request.time;
+    }
+
+    function isValidRoomState(data, circuitId) {
+      return data.circuitId == circuitId &&
+             data.gameMode in ['NORMAL', 'TIME_BOMB_45', 'ELIMINATION_60', 'KING_OF_TRACK', 'CONSISTENCY_DUEL', 'TURBO_SPRINT_3', 'PURSUIT_HUNTER'] &&
+             data.sessionPhase in ['IDLE', 'WARMUP', 'COUNTDOWN_30', 'RANDOM_GATE', 'RACING', 'PAUSED_YELLOW'] &&
+             data.flagState in ['GREEN', 'YELLOW'] &&
+             data.heatDurationSec is int && data.heatDurationSec >= 30 && data.heatDurationSec <= 7200 &&
+             data.phaseStartTimeMs is int && data.phaseStartTimeMs >= 0 &&
+             data.phaseEndTimeMs is int && data.phaseEndTimeMs >= 0 &&
+             data.gateDropTimeMs is int && data.gateDropTimeMs >= 0 &&
+             data.friendlyModeActive is bool &&
+             data.lipoWarnMinutes is int && data.lipoWarnMinutes >= 1 && data.lipoWarnMinutes <= 120 &&
+             data.antiVibration in ['HIGH', 'MEDIUM', 'LOW_WIND'] &&
+             data.updatedAtMs is int && data.updatedAtMs >= 0 &&
+             data.updatedAt is timestamp && data.updatedAt <= request.time;
+    }
+
+    function isValidActiveRoomRider(data, circuitId, riderId) {
+      return data.circuitId == circuitId &&
+             data.riderId == riderId &&
+             data.ownerUid is string && data.ownerUid.size() >= 1 && data.ownerUid.size() <= 128 &&
+             data.riderName is string && data.riderName.size() >= 1 && data.riderName.size() <= 60 &&
+             data.dorsal is string && data.dorsal.size() >= 1 && data.dorsal.size() <= 16 &&
+             data.bikeModel is string && data.bikeModel.size() <= 80 &&
+             isValidSurface(data.discipline) &&
+             data.lapsCount is int && data.lapsCount >= 0 &&
+             data.bestLapMs is int && data.bestLapMs >= 0 &&
+             data.lastLapMs is int && data.lastLapMs >= 0 &&
+             data.lastPassTimestampMs is int && data.lastPassTimestampMs >= 0 &&
+             data.colorConfirmed is bool &&
+             data.eliminated is bool &&
+             data.sessionStartMs is int && data.sessionStartMs >= 0 &&
+             data.updatedAt is timestamp && data.updatedAt <= request.time;
+    }
+
+    function isValidAntenna(data, circuitId, antennaId) {
+      return data.circuitId == circuitId &&
+             data.antennaId == antennaId &&
+             data.status is string && data.status.size() <= 60 &&
+             data.isCalibrated is bool &&
+             data.detectionMode in ['ANY_PASS', 'FAIRING_COLOR', 'SINGLE_COLOR'] &&
+             data.lastHeartbeatMs is int && data.lastHeartbeatMs >= 0 &&
+             (!('lastDetectedColors' in data) || (data.lastDetectedColors is list && data.lastDetectedColors.size() <= 8)) &&
+             (!('lastDetectedHexes' in data) || (data.lastDetectedHexes is list && data.lastDetectedHexes.size() <= 8)) &&
+             (!('lastDetectedLab' in data) || (data.lastDetectedLab is list && data.lastDetectedLab.size() <= 8)) &&
+             (!('lastSnapshotBase64' in data) || (data.lastSnapshotBase64 is string && data.lastSnapshotBase64.size() <= 350000)) &&
+             (!('lastPhotoFinishBase64' in data) || (data.lastPhotoFinishBase64 is string && data.lastPhotoFinishBase64.size() <= 350000)) &&
+             data.updatedAt is timestamp && data.updatedAt <= request.time;
+    }
+
+    function isValidLap(data, circuitId) {
+      return data.ownerUid is string && data.ownerUid.size() >= 1 && data.ownerUid.size() <= 128 &&
+             data.circuitId == circuitId &&
+             data.riderId is string && data.riderId.size() >= 1 && data.riderId.size() <= 128 &&
+             data.riderName is string && data.riderName.size() >= 1 && data.riderName.size() <= 60 &&
+             data.dorsal is string && data.dorsal.size() <= 16 &&
+             data.bikeModel is string && data.bikeModel.size() <= 80 &&
+             isValidSurface(data.discipline) &&
+             data.lapTimeMs is int && data.lapTimeMs >= 0 && data.lapTimeMs <= 3600000 &&
+             data.deltaMs is int &&
+             data.speedKmh is number && data.speedKmh >= 0 &&
+             data.timestampMs is int && data.timestampMs >= 0 &&
+             data.antennaId is string && data.antennaId.size() <= 64 &&
+             data.detectedColors is list && data.detectedColors.size() <= 8 &&
+             (data.detectedColors.size() == 0 || data.detectedColors[0] is string) &&
+             data.dayKey is string && data.dayKey.size() <= 20 &&
+             data.createdAt is timestamp && data.createdAt <= request.time;
+    }
+
+    function isValidColorProfile(data, circuitId, riderId) {
+      return data.circuitId == circuitId &&
+             data.riderId == riderId &&
+             data.riderName is string && data.riderName.size() >= 1 && data.riderName.size() <= 60 &&
+             data.samples is list && data.samples.size() <= 12 &&
+             data.confirmed is bool &&
+             data.updatedAt is timestamp && data.updatedAt <= request.time;
+    }
+
+    function isValidColorCapture(data, circuitId) {
+      return data.ownerUid is string && data.ownerUid.size() >= 1 && data.ownerUid.size() <= 128 &&
+             data.circuitId == circuitId &&
+             data.timestampMs is int && data.timestampMs >= 0 &&
+             data.antennaId is string && data.antennaId.size() <= 64 &&
+             data.samples is list && data.samples.size() <= 8 &&
+             (!('snapshotBase64' in data) || (data.snapshotBase64 is string && data.snapshotBase64.size() <= 350000)) &&
+             data.createdAt is timestamp && data.createdAt <= request.time;
+    }
+
+    function isValidChampionship(data, circuitId) {
+      return data.ownerUid is string && data.ownerUid.size() >= 1 && data.ownerUid.size() <= 128 &&
+             data.circuitId == circuitId &&
+             data.name is string && data.name.size() >= 1 && data.name.size() <= 100 &&
+             isValidSurface(data.discipline) &&
+             data.totalHeats is int && data.totalHeats >= 1 && data.totalHeats <= 50 &&
+             data.completedHeats is int && data.completedHeats >= 0 && data.completedHeats <= data.totalHeats &&
+             data.standings is map &&
+             data.createdAtMs is int && data.createdAtMs >= 0 &&
+             data.createdAt is timestamp && data.createdAt <= request.time &&
+             data.updatedAt is timestamp && data.updatedAt <= request.time;
+    }
+
+    function isValidFanState(data, circuitId) {
+      return data.circuitId == circuitId &&
+             data.bets is map &&
+             data.mvpVotes is map &&
+             data.ovationCount is int && data.ovationCount >= 0 &&
+             data.cheerMessages is list && data.cheerMessages.size() <= 25 &&
+             (!('paClipBase64' in data) || (data.paClipBase64 is string && data.paClipBase64.size() <= 400000)) &&
+             data.paClipTimestampMs is int && data.paClipTimestampMs >= 0 &&
+             data.updatedAt is timestamp && data.updatedAt <= request.time;
+    }
+
+    function isValidReport(data) {
+      return data.ownerUid is string && data.ownerUid.size() >= 1 && data.ownerUid.size() <= 128 &&
+             data.senderName is string && data.senderName.size() >= 1 && data.senderName.size() <= 60 &&
+             data.type is string && data.type.size() >= 1 && data.type.size() <= 40 &&
+             data.message is string && data.message.size() >= 1 && data.message.size() <= 1200 &&
+             (!('circuitRequested' in data) || (data.circuitRequested is string && data.circuitRequested.size() <= 120)) &&
+             data.timestampMs is int && data.timestampMs >= 0 &&
+             data.createdAt is timestamp && data.createdAt <= request.time;
+    }
+
+    // --- 1. Private User Account Profile ---
+    match /users/{userId} {
+      allow get, list: if isSignedIn() && request.auth.uid == userId;
+      allow create: if isSignedIn() && isValidId(userId) &&
+                       request.auth.uid == userId &&
+                       incoming().userId == request.auth.uid &&
+                       incoming().keys().hasAll(['userId', 'displayName', 'createdAt', 'updatedAt']) &&
+                       incoming().keys().hasOnly(['userId', 'displayName', 'email', 'createdAt', 'updatedAt']) &&
+                       isValidUserProfile(incoming());
+      allow update: if isSignedIn() && isValidId(userId) &&
+                       request.auth.uid == userId &&
+                       incoming().userId == existing().userId &&
+                       incoming().createdAt == existing().createdAt &&
+                       isValidUserProfile(incoming()) &&
+                       incoming().diff(existing()).affectedKeys().hasOnly(['displayName', 'email', 'updatedAt']);
+      allow delete: if isSignedIn() && isValidId(userId) && request.auth.uid == userId;
+    }
+
+    // --- 2. Admins (Console / Bootstrap Email Only) ---
+    match /admins/{adminId} {
+      allow get: if isSignedIn() && isValidId(adminId) && request.auth.uid == adminId;
+      allow list, create, update, delete: if false;
+    }
+
+    // --- 3. App Config & Telemetry ---
+    match /app_config/global {
+      allow get: if isSignedIn();
+      allow list, delete: if false;
+      allow create: if isAdmin() &&
+                       incoming().keys().hasAll(['registrationOpen', 'apkDownloadLocked', 'apkDownloadUrl', 'directorPasswordHash', 'directorCustomPasswordSet', 'ownerUid', 'createdAt', 'updatedAt']) &&
+                       incoming().keys().hasOnly(['registrationOpen', 'apkDownloadLocked', 'apkDownloadUrl', 'directorPasswordHash', 'directorCustomPasswordSet', 'ownerUid', 'createdAt', 'updatedAt']) &&
+                       isValidGlobalConfig(incoming());
+      allow update: if isAdmin() &&
+                       incoming().ownerUid == existing().ownerUid &&
+                       incoming().createdAt == existing().createdAt &&
+                       isValidGlobalConfig(incoming()) &&
+                       incoming().diff(existing()).affectedKeys().hasOnly(['registrationOpen', 'apkDownloadLocked', 'apkDownloadUrl', 'directorPasswordHash', 'directorCustomPasswordSet', 'updatedAt']);
+    }
+
+    match /app_config/telemetry {
+      allow get: if isSignedIn();
+      allow list, delete: if false;
+      allow create, update: if isSignedIn() &&
+                               incoming().keys().hasAll(['visitCount', 'lastVisits', 'updatedAt']) &&
+                               incoming().keys().hasOnly(['visitCount', 'lastVisits', 'updatedAt']) &&
+                               isValidTelemetry(incoming());
+    }
+
+    // --- 4. Invite / Official Circuit Codes ---
+    match /invite_codes/{codeId} {
+      allow get: if isSignedIn() && isValidId(codeId);
+      allow list: if isAdmin();
+      allow create: if isAdmin() && isValidId(codeId) &&
+                       incoming().keys().hasAll(['code', 'circuitName', 'promoteOfficial', 'active', 'redeemedCount', 'ownerUid', 'createdAtMs', 'createdAt', 'updatedAt']) &&
+                       incoming().keys().hasOnly(['code', 'circuitName', 'note', 'promoteOfficial', 'active', 'redeemedCount', 'ownerUid', 'createdAtMs', 'createdAt', 'updatedAt']) &&
+                       isValidInviteCode(incoming());
+      allow update: if isValidId(codeId) &&
+                       isValidInviteCode(incoming()) &&
+                       incoming().ownerUid == existing().ownerUid &&
+                       incoming().createdAt == existing().createdAt &&
+                       (
+                         (isAdmin() && incoming().diff(existing()).affectedKeys().hasOnly(['circuitName', 'note', 'promoteOfficial', 'active', 'redeemedCount', 'updatedAt'])) ||
+                         (isSignedIn() &&
+                          existing().active == true &&
+                          incoming().code == existing().code &&
+                          incoming().circuitName == existing().circuitName &&
+                          incoming().promoteOfficial == existing().promoteOfficial &&
+                          incoming().active == existing().active &&
+                          incoming().redeemedCount == existing().redeemedCount + 1 &&
+                          incoming().diff(existing()).affectedKeys().hasOnly(['redeemedCount', 'updatedAt']))
+                       );
+      allow delete: if isAdmin() && isValidId(codeId);
+    }
+
+    // --- 5. Riders (No PII; Public Active Ranking + Owner Profile) ---
+    match /riders/{riderId} {
+      allow get: if isSignedIn() && isValidId(riderId) &&
+                    (request.auth.uid == riderId || existing().status == 'ACTIVE' || isAdmin());
+      allow list: if isSignedIn() &&
+                     (existing().status == 'ACTIVE' || existing().ownerUid == request.auth.uid || isAdmin());
+      allow create: if isSignedIn() && isValidId(riderId) &&
+                       (request.auth.uid == riderId || isAdmin()) &&
+                       incoming().ownerUid == request.auth.uid &&
+                       incoming().status == 'ACTIVE' &&
+                       incoming().keys().hasAll(['ownerUid', 'name', 'status', 'totalLaps', 'bestLapMs', 'regularityIndex', 'avgSpeedKmh', 'eq200mMs', 'activeBikeId', 'preferredSurface', 'createdAtMs', 'lastSeenAtMs', 'createdAt', 'updatedAt']) &&
+                       incoming().keys().hasOnly(['ownerUid', 'name', 'status', 'totalLaps', 'bestLapMs', 'regularityIndex', 'avgSpeedKmh', 'eq200mMs', 'activeBikeId', 'preferredSurface', 'createdAtMs', 'lastSeenAtMs', 'createdAt', 'updatedAt']) &&
+                       isValidRider(incoming());
+      allow update: if isSignedIn() && isValidId(riderId) &&
+                       isValidRider(incoming()) &&
+                       incoming().ownerUid == existing().ownerUid &&
+                       incoming().createdAt == existing().createdAt &&
+                       (
+                         (isAdmin() && incoming().diff(existing()).affectedKeys().hasOnly(['name', 'status', 'totalLaps', 'bestLapMs', 'regularityIndex', 'avgSpeedKmh', 'eq200mMs', 'activeBikeId', 'preferredSurface', 'lastSeenAtMs', 'updatedAt'])) ||
+                         (request.auth.uid == riderId &&
+                          incoming().status == existing().status &&
+                          incoming().diff(existing()).affectedKeys().hasOnly(['name', 'totalLaps', 'bestLapMs', 'regularityIndex', 'avgSpeedKmh', 'eq200mMs', 'activeBikeId', 'preferredSurface', 'lastSeenAtMs', 'updatedAt']))
+                       );
+      allow delete: if isSignedIn() && isValidId(riderId) && (request.auth.uid == riderId || isAdmin());
+    }
+
+    // --- 6. Bikes & Public Paddock Setups ---
+    match /bikes/{bikeId} {
+      allow get: if isSignedIn() && isValidId(bikeId) &&
+                    (existing().ownerUid == request.auth.uid || existing().publishedToPaddock == true || isAdmin());
+      allow list: if isSignedIn() &&
+                     (existing().ownerUid == request.auth.uid || existing().publishedToPaddock == true || isAdmin());
+      allow create: if isSignedIn() && isValidId(bikeId) &&
+                       incoming().ownerUid == request.auth.uid &&
+                       incoming().riderId == request.auth.uid &&
+                       incoming().setupVotes == 0 &&
+                       incoming().votedByRiderIds.size() == 0 &&
+                       isValidBike(incoming());
+      allow update: if isSignedIn() && isValidId(bikeId) &&
+                       isValidBike(incoming()) &&
+                       incoming().ownerUid == existing().ownerUid &&
+                       incoming().createdAt == existing().createdAt &&
+                       (
+                         isAdmin() ||
+                         existing().ownerUid == request.auth.uid ||
+                         (existing().publishedToPaddock == true &&
+                          incoming().diff(existing()).affectedKeys().hasOnly(['setupVotes', 'votedByRiderIds', 'updatedAt']))
+                       );
+      allow delete: if isSignedIn() && isValidId(bikeId) && (existing().ownerUid == request.auth.uid || isAdmin());
+    }
+
+    // --- 7. Circuits & Live Track Subcollections ---
+    match /circuits/{circuitId} {
+      allow get: if isSignedIn() && isValidId(circuitId) &&
+                    (existing().visibility == 'PUBLIC' || existing().ownerUid == request.auth.uid || isAdmin());
+      allow list: if isSignedIn() &&
+                     (existing().visibility == 'PUBLIC' || existing().ownerUid == request.auth.uid || isAdmin());
+      allow create: if isSignedIn() && isValidId(circuitId) &&
+                       incoming().ownerUid == request.auth.uid &&
+                       isValidCircuit(incoming()) &&
+                       (
+                         isAdmin() ||
+                         incoming().isOfficial == false ||
+                         ('officialCodeUsed' in incoming() &&
+                          isValidId(incoming().officialCodeUsed) &&
+                          exists(/databases/$(database)/documents/invite_codes/$(incoming().officialCodeUsed)) &&
+                          get(/databases/$(database)/documents/invite_codes/$(incoming().officialCodeUsed)).data.active == true &&
+                          get(/databases/$(database)/documents/invite_codes/$(incoming().officialCodeUsed)).data.promoteOfficial == true)
+                       );
+      allow update: if isSignedIn() && isValidId(circuitId) &&
+                       isValidCircuit(incoming()) &&
+                       incoming().ownerUid == existing().ownerUid &&
+                       incoming().createdAt == existing().createdAt &&
+                       (
+                         isAdmin() ||
+                         (existing().ownerUid == request.auth.uid &&
+                          (incoming().isOfficial == existing().isOfficial ||
+                           ('officialCodeUsed' in incoming() &&
+                            isValidId(incoming().officialCodeUsed) &&
+                            exists(/databases/$(database)/documents/invite_codes/$(incoming().officialCodeUsed)) &&
+                            get(/databases/$(database)/documents/invite_codes/$(incoming().officialCodeUsed)).data.active == true &&
+                            get(/databases/$(database)/documents/invite_codes/$(incoming().officialCodeUsed)).data.promoteOfficial == true)))
+                       );
+      allow delete: if isSignedIn() && isValidId(circuitId) && (existing().ownerUid == request.auth.uid || isAdmin());
+
+      match /live/room {
+        allow get: if isSignedIn() && isValidId(circuitId);
+        allow list, delete: if false;
+        allow create, update: if isSignedIn() && isValidId(circuitId) && isValidRoomState(incoming(), circuitId);
+      }
+
+      match /live/fan {
+        allow get: if isSignedIn() && isValidId(circuitId);
+        allow list, delete: if false;
+        allow create, update: if isSignedIn() && isValidId(circuitId) && isValidFanState(incoming(), circuitId);
+      }
+
+      match /active_riders/{riderId} {
+        allow get: if isSignedIn() && isValidId(circuitId) && isValidId(riderId);
+        allow list: if isSignedIn() && existing().circuitId == circuitId;
+        allow create: if isSignedIn() && isValidId(circuitId) && isValidId(riderId) &&
+                         (request.auth.uid == riderId || isAdmin()) &&
+                         incoming().ownerUid == request.auth.uid &&
+                         isValidActiveRoomRider(incoming(), circuitId, riderId);
+        allow update: if isSignedIn() && isValidId(circuitId) && isValidId(riderId) &&
+                         isValidActiveRoomRider(incoming(), circuitId, riderId) &&
+                         (request.auth.uid == riderId || existing().ownerUid == request.auth.uid || isAdmin());
+        allow delete: if isSignedIn() && isValidId(circuitId) && isValidId(riderId) &&
+                         (request.auth.uid == riderId || existing().ownerUid == request.auth.uid || isAdmin());
+      }
+
+      match /antennas/{antennaId} {
+        allow get: if isSignedIn() && isValidId(circuitId) && isValidId(antennaId);
+        allow list: if isSignedIn() && existing().circuitId == circuitId;
+        allow create, update: if isSignedIn() && isValidId(circuitId) && isValidId(antennaId) &&
+                                 isValidAntenna(incoming(), circuitId, antennaId);
+        allow delete: if isAdmin() && isValidId(circuitId) && isValidId(antennaId);
+      }
+
+      match /laps/{lapId} {
+        allow get: if isSignedIn() && isValidId(circuitId) && isValidId(lapId);
+        allow list: if isSignedIn() && existing().circuitId == circuitId;
+        allow create: if isSignedIn() && isValidId(circuitId) && isValidId(lapId) &&
+                         incoming().ownerUid == request.auth.uid &&
+                         isValidLap(incoming(), circuitId);
+        allow update: if false;
+        allow delete: if isSignedIn() && isValidId(circuitId) && isValidId(lapId) &&
+                         (existing().ownerUid == request.auth.uid || isAdmin());
+      }
+
+      match /color_profiles/{riderId} {
+        allow get: if isSignedIn() && isValidId(circuitId) && isValidId(riderId);
+        allow list: if isSignedIn() && existing().circuitId == circuitId;
+        allow create, update: if isSignedIn() && isValidId(circuitId) && isValidId(riderId) &&
+                                 isValidColorProfile(incoming(), circuitId, riderId);
+        allow delete: if isSignedIn() && isValidId(circuitId) && isValidId(riderId) &&
+                         (request.auth.uid == riderId || isAdmin());
+      }
+
+      match /color_captures/{captureId} {
+        allow get: if isSignedIn() && isValidId(circuitId) && isValidId(captureId);
+        allow list: if isSignedIn() && existing().circuitId == circuitId;
+        allow create: if isSignedIn() && isValidId(circuitId) && isValidId(captureId) &&
+                         incoming().ownerUid == request.auth.uid &&
+                         isValidColorCapture(incoming(), circuitId);
+        allow update: if false;
+        allow delete: if isSignedIn() && isValidId(circuitId) && isValidId(captureId) &&
+                         (existing().ownerUid == request.auth.uid || isAdmin());
+      }
+
+      match /championships/{champId} {
+        allow get: if isSignedIn() && isValidId(circuitId) && isValidId(champId);
+        allow list: if isSignedIn() && existing().circuitId == circuitId;
+        allow create: if isSignedIn() && isValidId(circuitId) && isValidId(champId) &&
+                         incoming().ownerUid == request.auth.uid &&
+                         isValidChampionship(incoming(), circuitId);
+        allow update: if isSignedIn() && isValidId(circuitId) && isValidId(champId) &&
+                         isValidChampionship(incoming(), circuitId) &&
+                         incoming().ownerUid == existing().ownerUid &&
+                         incoming().createdAt == existing().createdAt &&
+                         (existing().ownerUid == request.auth.uid || isAdmin());
+        allow delete: if isSignedIn() && isValidId(circuitId) && isValidId(champId) &&
+                         (existing().ownerUid == request.auth.uid || isAdmin());
+      }
+    }
+
+    // --- 8. Reports & Official Circuit Inbox ---
+    match /reports/{reportId} {
+      allow get: if isSignedIn() && isValidId(reportId) &&
+                    (existing().ownerUid == request.auth.uid || isAdmin());
+      allow list: if isSignedIn() &&
+                     (existing().ownerUid == request.auth.uid || isAdmin());
+      allow create: if isSignedIn() && isValidId(reportId) &&
+                       incoming().ownerUid == request.auth.uid &&
+                       incoming().keys().hasAll(['ownerUid', 'senderName', 'type', 'message', 'timestampMs', 'createdAt']) &&
+                       incoming().keys().hasOnly(['ownerUid', 'senderName', 'type', 'message', 'circuitRequested', 'timestampMs', 'createdAt']) &&
+                       isValidReport(incoming());
+      allow update, delete: if isAdmin() && isValidId(reportId);
+    }
+  }
+}

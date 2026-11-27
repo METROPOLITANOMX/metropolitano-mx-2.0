@@ -1,4 +1,5 @@
 <?xml version="1.0" encoding="utf-8" standalone="no"?>
 <resources>
+    <string name="firestore_database_id" translatable="false">ai-studio-android-metropol-1e3b401f-9b23-4d88-a5e7-7ba777c4608a</string>
     <string name="recaptcha_site_key" translatable="false">6Le_2DIuAAAAAH0FnWl3nyGmR1nixlYWLtxLbdHh</string>
 </resources>

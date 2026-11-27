@@ -40,6 +40,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -80,12 +81,14 @@ fun PilotAuthDialog(
     onAuthenticated: () -> Unit
 ) {
     val mx = LocalMxColors.current
-    var tabIndex by remember { mutableIntStateOf(0) }
-    var name by remember { mutableStateOf(state.rememberedName) }
-    var pass by remember { mutableStateOf(state.rememberedPass) }
-    var pin4 by remember { mutableStateOf("") }
-    var rememberMe by remember { mutableStateOf(true) }
-    val activeRidersList = state.riders.filter { it.status == RiderStatus.ACTIVE }
+    var name by rememberSaveable {
+        mutableStateOf(
+            state.rememberedName
+                .ifBlank { state.userDisplayName }
+                .ifBlank { "" }
+        )
+    }
+    var selectedSurface by rememberSaveable { mutableStateOf(state.activeCircuit.surface) }
 
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -94,66 +97,38 @@ fun PilotAuthDialog(
         textContentColor = MaterialTheme.colorScheme.onSurface,
         title = { Text(strings.iamPilot, style = MaterialTheme.typography.titleLarge) },
         text = {
-            Column(modifier = Modifier.verticalScroll(rememberScrollState())) {
-                TabRow(
-                    selectedTabIndex = tabIndex,
-                    containerColor = MaterialTheme.colorScheme.surfaceVariant,
-                    contentColor = mx.goldAccent
-                ) {
-                    Tab(
-                        selected = tabIndex == 0,
-                        onClick = { tabIndex = 0 },
-                        selectedContentColor = mx.goldAccent,
-                        unselectedContentColor = mx.subtleText,
-                        text = { Text(strings.pilotSignIn) }
-                    )
-                    Tab(
-                        selected = tabIndex == 1,
-                        onClick = { tabIndex = 1 },
-                        selectedContentColor = mx.goldAccent,
-                        unselectedContentColor = mx.subtleText,
-                        text = { Text(strings.pilotRegister) }
-                    )
-                    Tab(
-                        selected = tabIndex == 2,
-                        onClick = { tabIndex = 2 },
-                        selectedContentColor = mx.goldAccent,
-                        unselectedContentColor = mx.subtleText,
-                        text = { Text(strings.recoverPin) }
+            Column(
+                modifier = Modifier.verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                state.userEmail?.let { email ->
+                    Text(
+                        text = if (strings.isSpanish) {
+                            "Perfil vinculado a Google: $email"
+                        } else {
+                            "Linked Google account: $email"
+                        },
+                        style = MaterialTheme.typography.labelMedium,
+                        color = mx.telemetryGreen
                     )
                 }
-                Spacer(Modifier.height(10.dp))
 
-                if (tabIndex == 0 && activeRidersList.isNotEmpty()) {
+                if (!state.isOnline) {
+                    val cloudErr = state.lastCloudError
                     Text(
-                        if (strings.isSpanish) "¿Ya tienes cuenta? Toca tu piloto:" else "Existing account? Tap your name:",
+                        text = when {
+                            !cloudErr.isNullOrBlank() && strings.isSpanish ->
+                                "Sincronización en espera ($cloudErr). Tus datos se subirán automáticamente al recuperar conexión."
+                            !cloudErr.isNullOrBlank() ->
+                                "Sync pending ($cloudErr). Your profile will sync automatically once connected."
+                            strings.isSpanish ->
+                                "Sin conexión: tu perfil y motos se guardan localmente y se sincronizarán al volver online."
+                            else ->
+                                "Offline mode: your profile and garage save locally and sync when back online."
+                        },
                         style = MaterialTheme.typography.labelSmall,
-                        color = mx.goldAccent
+                        color = mx.goldBright
                     )
-                    Spacer(Modifier.height(4.dp))
-                    LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                        items(activeRidersList.take(12)) { r ->
-                            FilterChip(
-                                selected = name.equals(r.name, ignoreCase = true),
-                                onClick = {
-                                    name = r.name
-                                    if (r.name.equals(state.rememberedName, ignoreCase = true) && state.rememberedPass.isNotBlank()) {
-                                        pass = state.rememberedPass
-                                    }
-                                },
-                                label = { Text(r.name) },
-                                colors = mxChipColors()
-                            )
-                        }
-                    }
-                    Spacer(Modifier.height(8.dp))
-                } else if (tabIndex == 0 && !state.isOnline) {
-                    Text(
-                        if (strings.isSpanish) "Sin conexión nube: puedes iniciar con tu última cuenta guardada en el dispositivo." else "Offline: sign in with your last account saved on this device.",
-                        style = MaterialTheme.typography.labelSmall,
-                        color = mx.subtleText
-                    )
-                    Spacer(Modifier.height(6.dp))
                 }
 
                 OutlinedTextField(
@@ -164,57 +139,28 @@ fun PilotAuthDialog(
                     colors = mxTextFieldColors(),
                     modifier = Modifier.fillMaxWidth().testTag("auth_name_input")
                 )
-                Spacer(Modifier.height(8.dp))
-                if (tabIndex == 0 || tabIndex == 1) {
-                    OutlinedTextField(
-                        value = pass,
-                        onValueChange = { pass = it },
-                        label = { Text(strings.password) },
-                        singleLine = true,
-                        visualTransformation = PasswordVisualTransformation(),
-                        colors = mxTextFieldColors(),
-                        modifier = Modifier.fillMaxWidth().testTag("auth_pass_input")
+
+                Text(
+                    text = if (strings.isSpanish) "Disciplina inicial del Garaje:" else "Starter Garage discipline:",
+                    style = MaterialTheme.typography.labelMedium,
+                    color = mx.goldAccent
+                )
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    FilterChip(
+                        selected = selectedSurface == SurfaceType.MX,
+                        onClick = { selectedSurface = SurfaceType.MX },
+                        label = { Text("Losi Promoto-MX") },
+                        colors = mxChipColors()
+                    )
+                    FilterChip(
+                        selected = selectedSurface == SurfaceType.SM,
+                        onClick = { selectedSurface = SurfaceType.SM },
+                        label = { Text("Losi Promoto-SM") },
+                        colors = mxChipColors()
                     )
                 }
-                if (tabIndex == 1 || tabIndex == 2) {
-                    Spacer(Modifier.height(8.dp))
-                    OutlinedTextField(
-                        value = pin4,
-                        onValueChange = { if (it.length <= 4) pin4 = it.filter(Char::isDigit) },
-                        label = { Text(strings.pin4Digits) },
-                        singleLine = true,
-                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                        colors = mxTextFieldColors(),
-                        modifier = Modifier.fillMaxWidth().testTag("auth_pin_input")
-                    )
-                }
-                if (tabIndex == 2) {
-                    Spacer(Modifier.height(8.dp))
-                    OutlinedTextField(
-                        value = pass,
-                        onValueChange = { pass = it },
-                        label = { Text(strings.newPassword) },
-                        singleLine = true,
-                        visualTransformation = PasswordVisualTransformation(),
-                        colors = mxTextFieldColors(),
-                        modifier = Modifier.fillMaxWidth()
-                    )
-                }
-                if (tabIndex != 2) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Checkbox(
-                            checked = rememberMe,
-                            onCheckedChange = { rememberMe = it },
-                            colors = CheckboxDefaults.colors(
-                                checkedColor = mx.goldAccent,
-                                checkmarkColor = contrastTextOn(mx.goldAccent),
-                                uncheckedColor = mx.subtleText
-                            )
-                        )
-                        Text(strings.rememberMe, color = MaterialTheme.colorScheme.onSurface)
-                    }
-                }
-                if (tabIndex == 1 && !state.globalConfig.registrationOpen) {
+
+                if (!state.globalConfig.registrationOpen && !state.isAdminAccount) {
                     Text(
                         text = strings.registrationsClosed,
                         color = mx.racingRed,
@@ -226,23 +172,17 @@ fun PilotAuthDialog(
         confirmButton = {
             Mx3dButton(
                 onClick = {
-                    when (tabIndex) {
-                        0 -> viewModel.signInRider(name, pass, rememberMe, onAuthenticated)
-                        1 -> viewModel.registerRider(name, pass, pin4, rememberMe, onAuthenticated)
-                        else -> viewModel.recoverPasswordWithPin(name, pin4, pass)
-                    }
+                    viewModel.createOrUpdateGoogleRiderProfile(
+                        rawName = name,
+                        surface = selectedSurface,
+                        onSuccess = onAuthenticated
+                    )
                 },
                 containerColor = mx.goldAccent,
                 contentColor = contrastTextOn(mx.goldAccent),
                 modifier = Modifier.testTag("auth_submit_button")
             ) {
-                Text(
-                    when (tabIndex) {
-                        0 -> strings.enterTrack
-                        1 -> strings.registerBtn
-                        else -> strings.recoverBtn
-                    }
-                )
+                Text(strings.enterTrack)
             }
         },
         dismissButton = {
@@ -261,9 +201,9 @@ fun DirectorUnlockDialog(
     onAttemptUnlock: (String, Boolean) -> Boolean
 ) {
     val mx = LocalMxColors.current
-    var pwd by remember { mutableStateOf(state.rememberedDirectorPass) }
-    var rememberCreds by remember { mutableStateOf(state.rememberDirectorPass) }
-    var wrong by remember { mutableStateOf(false) }
+    var pwd by rememberSaveable { mutableStateOf(state.rememberedDirectorPass) }
+    var rememberCreds by rememberSaveable { mutableStateOf(state.rememberDirectorPass) }
+    var wrong by rememberSaveable { mutableStateOf(false) }
 
     AlertDialog(
         onDismissRequest = onDismiss,
