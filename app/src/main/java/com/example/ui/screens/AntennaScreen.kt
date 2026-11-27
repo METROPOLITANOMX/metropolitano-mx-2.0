@@ -42,11 +42,15 @@ import androidx.compose.material.icons.filled.CenterFocusStrong
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.LockOpen
 import androidx.compose.material.icons.filled.SwapHoriz
+import androidx.compose.material.icons.filled.Wifi
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.minimumInteractiveComponentSize
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
@@ -118,6 +122,8 @@ fun AntennaScreen(
     val scope = rememberCoroutineScope()
     var stationChosen by rememberSaveable { mutableStateOf(false) }
     var batterySaverBlackScreen by rememberSaveable { mutableStateOf(false) }
+    var showLanIpDialog by remember { mutableStateOf(false) }
+    var manualIpInput by remember(state.activeDirectorLanIp) { mutableStateOf(state.activeDirectorLanIp.orEmpty()) }
     var lastInteractionMonoMs by remember { mutableLongStateOf(SystemClock.elapsedRealtime()) }
 
     fun touchActivity() {
@@ -132,8 +138,8 @@ fun AntennaScreen(
     }
 
     // 1-minute inactivity auto black battery-saver screen (camera & detection keep running)
-    LaunchedEffect(stationChosen, lastInteractionMonoMs) {
-        if (stationChosen) {
+    LaunchedEffect(stationChosen, lastInteractionMonoMs, showLanIpDialog) {
+        if (stationChosen && !showLanIpDialog) {
             delay(60_000L)
             batterySaverBlackScreen = true
         }
@@ -584,19 +590,22 @@ fun AntennaScreen(
                                 style = MaterialTheme.typography.labelSmall,
                                 color = if (localCalibrated) mx.telemetryGreen else mx.goldBright
                             )
+                            val lanTag = state.activeDirectorLanIp?.let { "Wi-Fi $it" }
                             Text(
                                 text = if (state.antennaSyncOk) {
                                     val raceNote = if (state.roomState.sessionPhase != SessionPhase.IDLE) {
                                         if (strings.isSpanish) " • Silencio Carrera" else " • Race Silent"
                                     } else ""
-                                    if (strings.isSpanish) "Envío OK (${state.antennaUploadCount})$raceNote"
-                                    else "Sync OK (${state.antennaUploadCount})$raceNote"
+                                    val linkNote = if (lanTag != null) " • $lanTag" else ""
+                                    if (strings.isSpanish) "Envío OK (${state.antennaUploadCount})$linkNote$raceNote"
+                                    else "Sync OK (${state.antennaUploadCount})$linkNote$raceNote"
                                 } else {
-                                    "Error nube: ${state.antennaLastSyncError ?: "sin red"}"
+                                    if (strings.isSpanish) "Sin enlace nube/Wi-Fi • Toca icono Wi-Fi para IP Director"
+                                    else "No cloud/Wi-Fi link • Tap Wi-Fi icon for Director IP"
                                 },
                                 style = MaterialTheme.typography.labelSmall,
-                                color = if (state.antennaSyncOk) mx.telemetryGreen else mx.racingRed,
-                                maxLines = 3
+                                color = if (state.antennaSyncOk) mx.telemetryGreen else mx.goldBright,
+                                maxLines = 2
                             )
                         }
                     }
@@ -604,6 +613,23 @@ fun AntennaScreen(
                     Spacer(Modifier.width(6.dp))
 
                     Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                        IconButton(
+                            onClick = {
+                                touchActivity()
+                                showLanIpDialog = true
+                            },
+                            modifier = Modifier
+                                .clip(CircleShape)
+                                .background(Color.Black.copy(alpha = 0.65f))
+                                .minimumInteractiveComponentSize()
+                                .testTag("antenna_lan_ip_btn")
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Wifi,
+                                contentDescription = if (strings.isSpanish) "IP Wi-Fi Director" else "Director Wi-Fi IP",
+                                tint = if (state.activeDirectorLanIp != null) mx.telemetryGreen else mx.goldAccent
+                            )
+                        }
                         IconButton(
                             onClick = {
                                 touchActivity()
@@ -839,6 +865,55 @@ fun AntennaScreen(
                         }
                     }
                 }
+            }
+
+            if (showLanIpDialog) {
+                AlertDialog(
+                    onDismissRequest = { showLanIpDialog = false },
+                    title = {
+                        Text(if (strings.isSpanish) "Enlace Wi-Fi Directo con Director" else "Direct Wi-Fi Link to Director")
+                    },
+                    text = {
+                        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Text(
+                                text = if (strings.isSpanish) {
+                                    "Conecta ambos móviles al mismo Wi-Fi o Zona Wi-Fi. Si no se enlazan solos, escribe la IP que aparece en la pantalla de Dirección:"
+                                } else {
+                                    "Connect both phones to the same Wi-Fi or Hotspot. If auto-discovery fails, enter the IP shown in Director:"
+                                },
+                                style = MaterialTheme.typography.bodyMedium
+                            )
+                            OutlinedTextField(
+                                value = manualIpInput,
+                                onValueChange = { manualIpInput = it },
+                                label = { Text("IP Director (ej: 192.168.43.1)") },
+                                singleLine = true,
+                                modifier = Modifier.fillMaxWidth().testTag("antenna_manual_ip_input")
+                            )
+                        }
+                    },
+                    confirmButton = {
+                        TextButton(
+                            onClick = {
+                                touchActivity()
+                                viewModel.setManualDirectorLanIp(manualIpInput)
+                                showLanIpDialog = false
+                            }
+                        ) {
+                            Text(if (strings.isSpanish) "Conectar" else "Connect")
+                        }
+                    },
+                    dismissButton = {
+                        TextButton(
+                            onClick = {
+                                touchActivity()
+                                showLanIpDialog = false
+                            }
+                        ) {
+                            Text(if (strings.isSpanish) "Cerrar" else "Close")
+                        }
+                    }
+                )
             }
         }
     }

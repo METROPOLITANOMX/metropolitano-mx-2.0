@@ -70,8 +70,8 @@ fun FlagAndRecordFrameOverlay(
     val isRecentHotlap = lastHotlapAtMs > 0L && (nowMs - lastHotlapAtMs) in 0L..4200L
     val isYellow = flagState == FlagState.YELLOW
     val isGreenRacing = flagState == FlagState.GREEN && sessionPhase == SessionPhase.RACING
-    val isRecentGreen = isGreenRacing && (nowMs - phaseStartTimeMs) in 0L..4000L
-    if (!isYellow && !isRecentHotlap && !isGreenRacing) return
+    val isRecentGreen = isGreenRacing && (nowMs - phaseStartTimeMs) in 0L..5000L
+    if (!isYellow && !isRecentHotlap && !isRecentGreen) return
 
     val infinite = rememberInfiniteTransition(label = "edge_glow")
     val pulseColor by infinite.animateColor(

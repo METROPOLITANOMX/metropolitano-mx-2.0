@@ -436,7 +436,16 @@ fun DirectorScreen(
                         ) {
                             Icon(Icons.Default.Stop, contentDescription = null, modifier = Modifier.size(16.dp))
                             Spacer(Modifier.width(4.dp))
-                            Text("STOP", style = MaterialTheme.typography.labelLarge, maxLines = 1)
+                            Text(
+                                text = when {
+                                    activeRoom.sessionPhase == SessionPhase.WARMUP ->
+                                        if (strings.isSpanish) "FIN WARM-UP" else "END WARM-UP"
+                                    strings.isSpanish -> "FIN SESIÓN"
+                                    else -> "END HEAT"
+                                },
+                                style = MaterialTheme.typography.labelLarge,
+                                maxLines = 1
+                            )
                         }
                     }
                 }
@@ -676,7 +685,7 @@ private fun DirectorRoomControlTab(
                     ) {
                         Icon(Icons.Default.Stop, contentDescription = null, modifier = Modifier.size(16.dp))
                         Spacer(Modifier.width(3.dp))
-                        Text("STOP", maxLines = 1)
+                        Text(if (strings.isSpanish) "Parar Crono" else "Stop Timer", maxLines = 1)
                     }
                     Mx3dButton(
                         enabled = state.currentRider != null,
@@ -701,63 +710,6 @@ private fun DirectorRoomControlTab(
             nowMs = liveNowMs,
             isSpanish = strings.isSpanish
         )
-        // Active Session Status + Countdown + STOP Button
-        if (room.sessionPhase != SessionPhase.IDLE) {
-            val remSec = if (room.phaseEndTimeMs > liveNowMs) {
-                ((room.phaseEndTimeMs - liveNowMs) / 1000L).toInt().coerceAtLeast(0)
-            } else 0
-            val mm = remSec / 60
-            val ss = remSec % 60
-            val phaseLabel = when (room.sessionPhase) {
-                SessionPhase.WARMUP -> if (strings.isSpanish) "WARM-UP EN CURSO (CAPTURA DE COLORES)" else "WARM-UP IN PROGRESS (COLOR CAPTURE)"
-                SessionPhase.RACING -> if (strings.isSpanish) "CARRERA EN VIVO" else "LIVE RACE"
-                SessionPhase.PAUSED_YELLOW -> if (strings.isSpanish) "BANDERA AMARILLA (PAUSA)" else "YELLOW FLAG (PAUSED)"
-                SessionPhase.RANDOM_GATE -> if (strings.isSpanish) "VALLA MX ACTIVA" else "MX GATE ACTIVE"
-                else -> room.sessionPhase.name
-            }
-            GlassRaceCard(accentBorder = mx.racingRed) {
-                Column(modifier = Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.weight(1f)) {
-                            PulsingLiveDot()
-                            Spacer(Modifier.width(8.dp))
-                            Text(phaseLabel, style = MaterialTheme.typography.titleMedium, color = mx.goldBright)
-                        }
-                        if (room.phaseEndTimeMs > 0L) {
-                            Text(
-                                text = String.format("%d:%02d", mm, ss),
-                                style = MaterialTheme.typography.headlineMedium,
-                                color = mx.telemetryGreen,
-                                fontWeight = FontWeight.Bold
-                            )
-                        }
-                    }
-                    Mx3dButton(
-                        onClick = { viewModel.stopSession(isDirector = true) },
-                        containerColor = mx.racingRed,
-                        contentColor = Color.White,
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .testTag("director_stop_session_btn")
-                    ) {
-                        Icon(Icons.Default.Stop, contentDescription = null)
-                        Spacer(Modifier.width(8.dp))
-                        Text(
-                            if (room.sessionPhase == SessionPhase.WARMUP) {
-                                if (strings.isSpanish) "STOP WARM-UP (A PARRILLA)" else "STOP WARM-UP (TO GRID)"
-                            } else {
-                                if (strings.isSpanish) "STOP CARRERA / DETENER SESIÓN" else "STOP RACE / SESSION"
-                            },
-                            fontWeight = FontWeight.Bold
-                        )
-                    }
-                }
-            }
-        }
 
         val sessionBusy = room.sessionPhase != SessionPhase.IDLE
         GlassRaceCard {
@@ -966,28 +918,6 @@ private fun DirectorAntennaCameraPreviewCard(
     val selectedOnline = checkLive(selectedAntennaId)
 
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        val rtdbErr = state.lastRtdbError ?: state.antennaLastSyncError
-        if (rtdbErr?.contains("401") == true) {
-            GlassRaceCard(accentBorder = mx.racingRed) {
-                Column(modifier = Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                    Text(
-                        text = if (strings.isSpanish) "⚠ Firebase RTDB bloqueado (HTTP 401)" else "⚠ Firebase RTDB blocked (HTTP 401)",
-                        style = MaterialTheme.typography.titleSmall,
-                        color = mx.racingRed,
-                        fontWeight = FontWeight.Bold
-                    )
-                    Text(
-                        text = if (strings.isSpanish) {
-                            "Las reglas de Firebase RTDB caducaron o exigen auth. Activa '.read': true / '.write': true en Firebase Console -> Realtime Database -> Reglas, o conecta Antena y Director en la misma red Wi-Fi / Hotspot."
-                        } else {
-                            "Firebase RTDB rules expired or blocked access. Enable '.read': true / '.write': true in Firebase Console -> Realtime Database -> Rules, or keep Antenna & Director on the same Wi-Fi/Hotspot."
-                        },
-                        style = MaterialTheme.typography.labelSmall,
-                        color = mx.subtleText
-                    )
-                }
-            }
-        }
         state.otherCircuitOnlineAntenna?.let { (otherCircId, otherAntId) ->
             val targetCirc = state.circuits.firstOrNull { it.id == otherCircId }
             GlassRaceCard(accentBorder = mx.goldAccent) {
@@ -1020,6 +950,7 @@ private fun DirectorAntennaCameraPreviewCard(
             }
         }
 
+        val rtdbBlocked = (state.lastRtdbError ?: state.antennaLastSyncError)?.contains("401") == true
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.SpaceBetween,
@@ -1033,11 +964,24 @@ private fun DirectorAntennaCameraPreviewCard(
                 )
                 state.directorLanEndpoint?.let { ep ->
                     Text(
-                        text = if (strings.isSpanish) "Wi-Fi / Hotspot Directo activo: $ep" else "Direct Wi-Fi / Hotspot bridge: $ep",
+                        text = if (strings.isSpanish) "Wi-Fi Directo (mismo Wi-Fi/Hotspot): $ep" else "Direct Wi-Fi (same Wi-Fi/Hotspot): $ep",
                         style = MaterialTheme.typography.labelSmall,
                         color = mx.telemetryGreen
                     )
                 }
+                Text(
+                    text = if (rtdbBlocked) {
+                        if (strings.isSpanish) "Nube Firebase: Reglas RTDB 401 (usa Wi-Fi Directo o abre Admin Club)"
+                        else "Firebase Cloud: RTDB Rules 401 (use Direct Wi-Fi or see Club Admin)"
+                    } else if (state.isOnline) {
+                        if (strings.isSpanish) "Nube Firebase: Conectada" else "Firebase Cloud: Online"
+                    } else {
+                        if (strings.isSpanish) "Nube Firebase: Sin conexión (Wi-Fi Directo activo)" else "Firebase Cloud: Offline (Direct Wi-Fi active)"
+                    },
+                    style = MaterialTheme.typography.labelSmall,
+                    color = if (state.isOnline && !rtdbBlocked) mx.telemetryGreen else mx.goldBright,
+                    maxLines = 1
+                )
             }
             IconButton(onClick = { viewModel.refreshAntennasAndCaptures() }) {
                 Icon(Icons.Default.Refresh, contentDescription = "Refresh", tint = mx.goldAccent)

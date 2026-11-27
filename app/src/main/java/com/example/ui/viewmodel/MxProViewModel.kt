@@ -100,6 +100,8 @@ class MxProViewModel(application: Application) : AndroidViewModel(application) {
     @Volatile
     private var discoveredDirectorLanIp: String? = null
     @Volatile
+    private var manualDirectorLanIp: String? = null
+    @Volatile
     private var lastLanProbeMonoMs: Long = 0L
 
     init {
@@ -520,9 +522,10 @@ class MxProViewModel(application: Application) : AndroidViewModel(application) {
             }
         } else null
 
+        val mergedAntennas = mergeAntennasPreferringFresh(_uiState.value.antennas, antennas, repo.isOnline())
         val nowMsForAnt = syncedNowMs()
-        val updatedMonoMap = updateAntennaMonoTracker(_uiState.value.antennas, antennas, _uiState.value.antennaLastChangeMonoMs, nowMsForAnt)
-        val hasLocalLiveAnt = antennas.any { (id, cfg) ->
+        val updatedMonoMap = updateAntennaMonoTracker(_uiState.value.antennas, mergedAntennas, _uiState.value.antennaLastChangeMonoMs, nowMsForAnt)
+        val hasLocalLiveAnt = mergedAntennas.any { (id, cfg) ->
             isAntennaActuallyLive(cfg, updatedMonoMap[id] ?: 0L, nowMsForAnt)
         }
         val otherCircAnt = if (!hasLocalLiveAnt) findOtherCircuitLiveAntenna(circuitId, nowMsForAnt) else null
@@ -541,11 +544,11 @@ class MxProViewModel(application: Application) : AndroidViewModel(application) {
                 lastRtdbError = repo.lastRtdbError(),
                 roomState = room,
                 circuitLaps = laps,
-                antennas = antennas,
+                antennas = mergedAntennas,
                 antennaLastChangeMonoMs = updatedMonoMap,
                 otherCircuitOnlineAntenna = otherCircAnt,
                 colorProfiles = profiles,
-                capturedPasses = capturedPasses,
+                capturedPasses = capturedPasses.ifEmpty { state.capturedPasses },
                 championships = championships,
                 activeChampionshipId = activeChampId,
                 fanState = fan,
@@ -556,6 +559,32 @@ class MxProViewModel(application: Application) : AndroidViewModel(application) {
                 statusBannerMessage = forcedLogoutMsg ?: state.statusBannerMessage
             )
         }
+    }
+
+    private fun mergeAntennasPreferringFresh(
+        existing: Map<String, AntennaConfig>,
+        fetched: Map<String, AntennaConfig>,
+        cloudOnline: Boolean
+    ): Map<String, AntennaConfig> {
+        if (existing.isEmpty()) return fetched
+        val out = linkedMapOf<String, AntennaConfig>()
+        val allKeys = (existing.keys + fetched.keys)
+        for (id in allKeys) {
+            val prev = existing[id]
+            val next = fetched[id]
+            out[id] = when {
+                prev == null -> next!!
+                next == null -> prev
+                !cloudOnline -> {
+                    // Cloud returned 401/offline defaults: preserve live LAN frames & heartbeats,
+                    // while keeping Director's optimistic local settings.
+                    prev
+                }
+                prev.lastHeartbeatMs > next.lastHeartbeatMs -> prev
+                else -> next
+            }
+        }
+        return out
     }
 
     private fun isAntennaActuallyLive(cfg: AntennaConfig, lastMonoMs: Long, nowMs: Long): Boolean {
@@ -613,9 +642,10 @@ class MxProViewModel(application: Application) : AndroidViewModel(application) {
             val reports = repo.getReports()
             val capturedPasses = repo.getCapturedPasses(circuitId).take(12)
             val bikes = repo.getAllBikes()
+            val mergedAntennas = mergeAntennasPreferringFresh(_uiState.value.antennas, antennas, repo.isOnline())
             val nowMs = syncedNowMs()
-            val updatedMono = updateAntennaMonoTracker(_uiState.value.antennas, antennas, _uiState.value.antennaLastChangeMonoMs, nowMs)
-            val hasLocal = antennas.any { (id, cfg) -> isAntennaActuallyLive(cfg, updatedMono[id] ?: 0L, nowMs) }
+            val updatedMono = updateAntennaMonoTracker(_uiState.value.antennas, mergedAntennas, _uiState.value.antennaLastChangeMonoMs, nowMs)
+            val hasLocal = mergedAntennas.any { (id, cfg) -> isAntennaActuallyLive(cfg, updatedMono[id] ?: 0L, nowMs) }
             val otherCirc = if (!hasLocal) findOtherCircuitLiveAntenna(circuitId, nowMs) else null
             _uiState.update { st ->
                 st.copy(
@@ -626,11 +656,11 @@ class MxProViewModel(application: Application) : AndroidViewModel(application) {
                         lastVisits = globalCfg.lastVisits.ifEmpty { st.globalConfig.lastVisits }
                     ),
                     riders = riders.ifEmpty { st.riders },
-                    antennas = antennas,
+                    antennas = mergedAntennas,
                     antennaLastChangeMonoMs = updatedMono,
                     otherCircuitOnlineAntenna = otherCirc,
                     reports = reports,
-                    capturedPasses = capturedPasses,
+                    capturedPasses = capturedPasses.ifEmpty { st.capturedPasses },
                     allBikes = bikes.ifEmpty { st.allBikes }
                 )
             }
@@ -643,19 +673,20 @@ class MxProViewModel(application: Application) : AndroidViewModel(application) {
             val antennas = repo.getAntennas(circuitId)
             val capturedPasses = repo.getCapturedPasses(circuitId).take(12)
             val profiles = repo.getColorProfiles(circuitId)
+            val mergedAntennas = mergeAntennasPreferringFresh(_uiState.value.antennas, antennas, repo.isOnline())
             val nowMs = syncedNowMs()
-            val updatedMono = updateAntennaMonoTracker(_uiState.value.antennas, antennas, _uiState.value.antennaLastChangeMonoMs, nowMs)
-            val hasLocal = antennas.any { (id, cfg) -> isAntennaActuallyLive(cfg, updatedMono[id] ?: 0L, nowMs) }
+            val updatedMono = updateAntennaMonoTracker(_uiState.value.antennas, mergedAntennas, _uiState.value.antennaLastChangeMonoMs, nowMs)
+            val hasLocal = mergedAntennas.any { (id, cfg) -> isAntennaActuallyLive(cfg, updatedMono[id] ?: 0L, nowMs) }
             val otherCirc = if (!hasLocal) findOtherCircuitLiveAntenna(circuitId, nowMs) else null
-            _uiState.update {
-                it.copy(
+            _uiState.update { st ->
+                st.copy(
                     isOnline = repo.isOnline(),
                     lastRtdbError = repo.lastRtdbError(),
-                    antennas = antennas,
+                    antennas = mergedAntennas,
                     antennaLastChangeMonoMs = updatedMono,
                     otherCircuitOnlineAntenna = otherCirc,
-                    capturedPasses = capturedPasses,
-                    colorProfiles = profiles
+                    capturedPasses = capturedPasses.ifEmpty { st.capturedPasses },
+                    colorProfiles = profiles.ifEmpty { st.colorProfiles }
                 )
             }
         }
@@ -1946,6 +1977,28 @@ class MxProViewModel(application: Application) : AndroidViewModel(application) {
                         st.copy(capturedPasses = (listOf(cap) + st.capturedPasses).distinctBy { it.id }.take(12))
                     }
                 }
+            },
+            onRequestAntennaConfigJson = { cId, aId ->
+                val st = _uiState.value
+                val cfg = st.antennas[aId] ?: AntennaConfig(antennaId = aId, circuitId = cId)
+                JSONObject().apply {
+                    put("ok", true)
+                    put("antennaId", aId)
+                    put("circuitId", cId)
+                    put("calibrateCommandAtMs", cfg.calibrateCommandAtMs)
+                    put("detectionMode", cfg.detectionMode.name)
+                    put("roiSize", cfg.roiSize.name)
+                    put("roiHeight", cfg.roiHeight.name)
+                    put("lineOrientation", cfg.lineOrientation.name)
+                    put("linePosition", cfg.linePosition.toDouble())
+                    put("colorZoneX", cfg.colorZoneX.toDouble())
+                    put("colorZoneY", cfg.colorZoneY.toDouble())
+                    put("singleTargetColorName", cfg.singleTargetColorName)
+                    put("directionFilter", cfg.directionFilter.name)
+                    put("aiStewardEnabled", cfg.aiStewardEnabled)
+                    put("antiVibration", cfg.antiVibration.name)
+                    put("sessionPhase", st.roomState.sessionPhase.name)
+                }
             }
         )
     }
@@ -1955,18 +2008,110 @@ class MxProViewModel(application: Application) : AndroidViewModel(application) {
         _uiState.update { it.copy(directorLanEndpoint = null) }
     }
 
+    fun setManualDirectorLanIp(rawIp: String) {
+        val cleanIp = rawIp.trim().substringBefore(":").replace("http://", "").replace("https://", "")
+        val es = StringsProvider.current(_uiState.value.languageOverride).isSpanish
+        if (cleanIp.isBlank()) {
+            manualDirectorLanIp = null
+            discoveredDirectorLanIp = null
+            _uiState.update {
+                it.copy(
+                    activeDirectorLanIp = null,
+                    statusBannerMessage = if (es) "Búsqueda automática Wi-Fi activada" else "Auto Wi-Fi discovery enabled"
+                )
+            }
+            return
+        }
+        viewModelScope.launch {
+            val reachable = lanBridge.pingDirectorLan(cleanIp)
+            if (reachable) {
+                manualDirectorLanIp = cleanIp
+                discoveredDirectorLanIp = cleanIp
+                _uiState.update {
+                    it.copy(
+                        activeDirectorLanIp = cleanIp,
+                        antennaSyncOk = true,
+                        antennaLastSyncError = null,
+                        statusBannerMessage = if (es) "Wi-Fi Directo conectado a Director ($cleanIp)" else "Direct Wi-Fi linked to Director ($cleanIp)"
+                    )
+                }
+            } else {
+                _uiState.update {
+                    it.copy(
+                        statusBannerMessage = if (es) {
+                            "No responde Director en $cleanIp:${LocalLanAntennaBridge.HTTP_PORT} — verifica que Dirección esté abierta y en el mismo Wi-Fi/Hotspot"
+                        } else {
+                            "No Director reply at $cleanIp:${LocalLanAntennaBridge.HTTP_PORT} — ensure Director is open on same Wi-Fi/Hotspot"
+                        }
+                    )
+                }
+            }
+        }
+    }
+
     private suspend fun sendViaLanIfAvailable(payload: JSONObject): Boolean {
         val nowMono = SystemClock.elapsedRealtime()
-        if (discoveredDirectorLanIp == null && nowMono - lastLanProbeMonoMs > 8_000L) {
+        val targetIp = manualDirectorLanIp ?: discoveredDirectorLanIp
+        val resolvedIp = if (targetIp != null) {
+            targetIp
+        } else if (nowMono - lastLanProbeMonoMs > 5_000L) {
             lastLanProbeMonoMs = nowMono
-            discoveredDirectorLanIp = lanBridge.discoverDirectorIp()
+            val found = lanBridge.discoverDirectorIp()
+            discoveredDirectorLanIp = found
+            if (found != null) {
+                _uiState.update { it.copy(activeDirectorLanIp = found) }
+            }
+            found
+        } else {
+            null
         }
-        val ip = discoveredDirectorLanIp ?: return false
-        val ok = lanBridge.postToDirectorLan(ip, payload)
-        if (!ok) {
-            discoveredDirectorLanIp = null
+        val ip = resolvedIp ?: return false
+        val reply = lanBridge.postToDirectorLan(ip, payload)
+        if (reply == null) {
+            if (manualDirectorLanIp == null) {
+                discoveredDirectorLanIp = null
+                _uiState.update { it.copy(activeDirectorLanIp = null) }
+            }
+            return false
         }
-        return ok
+        if (_uiState.value.activeDirectorLanIp != ip) {
+            _uiState.update { it.copy(activeDirectorLanIp = ip) }
+        }
+        // Apply two-way Director remote settings & calibration returned over LAN
+        val aid = reply.optString("antennaId", payload.optString("antennaId", ""))
+        if (aid.isNotBlank() && reply.has("detectionMode")) {
+            val cid = reply.optString("circuitId", _uiState.value.activeCircuit.id)
+            _uiState.update { st ->
+                val cur = st.antennas[aid] ?: AntennaConfig(antennaId = aid, circuitId = cid)
+                val updated = cur.copy(
+                    calibrateCommandAtMs = maxOf(cur.calibrateCommandAtMs, reply.optLong("calibrateCommandAtMs", 0L)),
+                    detectionMode = runCatching { DetectionMode.valueOf(reply.optString("detectionMode", cur.detectionMode.name)) }
+                        .getOrDefault(cur.detectionMode),
+                    roiSize = runCatching { RoiSize.valueOf(reply.optString("roiSize", cur.roiSize.name)) }
+                        .getOrDefault(cur.roiSize),
+                    roiHeight = runCatching { RoiHeight.valueOf(reply.optString("roiHeight", cur.roiHeight.name)) }
+                        .getOrDefault(cur.roiHeight),
+                    lineOrientation = runCatching { LineOrientation.valueOf(reply.optString("lineOrientation", cur.lineOrientation.name)) }
+                        .getOrDefault(cur.lineOrientation),
+                    linePosition = reply.optDouble("linePosition", cur.linePosition.toDouble()).toFloat().coerceIn(0.1f, 0.9f),
+                    colorZoneX = reply.optDouble("colorZoneX", cur.colorZoneX.toDouble()).toFloat().coerceIn(0.15f, 0.85f),
+                    colorZoneY = reply.optDouble("colorZoneY", cur.colorZoneY.toDouble()).toFloat().coerceIn(0.15f, 0.85f),
+                    singleTargetColorName = reply.optString("singleTargetColorName", cur.singleTargetColorName),
+                    directionFilter = runCatching { PassingDirection.valueOf(reply.optString("directionFilter", cur.directionFilter.name)) }
+                        .getOrDefault(cur.directionFilter),
+                    aiStewardEnabled = reply.optBoolean("aiStewardEnabled", cur.aiStewardEnabled),
+                    antiVibration = runCatching { AntiVibrationLevel.valueOf(reply.optString("antiVibration", cur.antiVibration.name)) }
+                        .getOrDefault(cur.antiVibration)
+                )
+                val phaseStr = reply.optString("sessionPhase", "")
+                val nextPhase = runCatching { SessionPhase.valueOf(phaseStr) }.getOrNull()
+                val nextRoom = if (nextPhase != null && nextPhase != st.roomState.sessionPhase) {
+                    st.roomState.copy(sessionPhase = nextPhase)
+                } else st.roomState
+                st.copy(antennas = st.antennas + (aid to updated), roomState = nextRoom)
+            }
+        }
+        return true
     }
 
     // --- Antenna Screen Controls ---
@@ -2002,8 +2147,7 @@ class MxProViewModel(application: Application) : AndroidViewModel(application) {
                 it.copy(
                     antennaSyncOk = ok || lanOk,
                     antennaLastSyncError = when {
-                        ok -> null
-                        lanOk -> "Wi-Fi Directo OK (${discoveredDirectorLanIp}) • Nube: ${repo.lastRtdbError()}"
+                        ok || lanOk -> null
                         else -> (repo.lastRtdbError() ?: "RTDB write error")
                     }
                 )
@@ -2048,12 +2192,11 @@ class MxProViewModel(application: Application) : AndroidViewModel(application) {
             val lanOk = if (!ok) sendViaLanIfAvailable(patchObj) else false
             _uiState.update {
                 it.copy(
-                    isOnline = ok,
+                    isOnline = ok || lanOk,
                     antennaSyncOk = ok || lanOk,
                     antennaUploadCount = if (ok || lanOk) it.antennaUploadCount + 1 else it.antennaUploadCount,
                     antennaLastSyncError = when {
-                        ok -> null
-                        lanOk -> "Wi-Fi Directo OK (${discoveredDirectorLanIp}) • Nube: ${repo.lastRtdbError()}"
+                        ok || lanOk -> null
                         else -> (repo.lastRtdbError() ?: "RTDB heartbeat failed")
                     }
                 )
@@ -2090,7 +2233,7 @@ class MxProViewModel(application: Application) : AndroidViewModel(application) {
             _uiState.update {
                 it.copy(
                     antennaSyncOk = ok || lanOk,
-                    antennaLastSyncError = if (ok) null else repo.lastRtdbError()
+                    antennaLastSyncError = if (ok || lanOk) null else repo.lastRtdbError()
                 )
             }
         }
@@ -2127,12 +2270,11 @@ class MxProViewModel(application: Application) : AndroidViewModel(application) {
             val lanOk = if (!ok) sendViaLanIfAvailable(patchObj) else false
             _uiState.update {
                 it.copy(
-                    isOnline = ok,
+                    isOnline = ok || lanOk,
                     antennaSyncOk = ok || lanOk,
                     antennaUploadCount = if (ok || lanOk) it.antennaUploadCount + 1 else it.antennaUploadCount,
                     antennaLastSyncError = when {
-                        ok -> null
-                        lanOk -> "Wi-Fi Directo OK (${discoveredDirectorLanIp}) • Nube: ${repo.lastRtdbError()}"
+                        ok || lanOk -> null
                         else -> (repo.lastRtdbError() ?: "RTDB snapshot failed")
                     }
                 )

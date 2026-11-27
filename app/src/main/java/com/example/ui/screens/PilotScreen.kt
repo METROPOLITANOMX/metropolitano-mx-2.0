@@ -211,9 +211,9 @@ fun PilotScreen(
                         contentColor = Color.White,
                         modifier = Modifier.height(72.dp).testTag("transmitter_stop_chrono")
                     ) {
-                        Icon(Icons.Default.Stop, contentDescription = "STOP")
+                        Icon(Icons.Default.Stop, contentDescription = null)
                         Spacer(Modifier.width(4.dp))
-                        Text("STOP", style = MaterialTheme.typography.titleLarge)
+                        Text(if (strings.isSpanish) "PARAR" else "STOP", style = MaterialTheme.typography.titleLarge)
                     }
                 }
             }
@@ -516,7 +516,13 @@ private fun PilotTrackRoomTab(
                     ) {
                         Icon(Icons.Default.Stop, contentDescription = null)
                         Spacer(Modifier.width(6.dp))
-                        Text(if (room.sessionPhase == SessionPhase.WARMUP) "STOP WARM-UP" else if (strings.isSpanish) "STOP CARRERA" else "STOP RACE")
+                        Text(
+                            if (room.sessionPhase == SessionPhase.WARMUP) {
+                                if (strings.isSpanish) "FIN WARM-UP" else "END WARM-UP"
+                            } else {
+                                if (strings.isSpanish) "FIN MANGA" else "END HEAT"
+                            }
+                        )
                     }
                 }
             }
@@ -627,7 +633,11 @@ private fun PilotTrackRoomTab(
                     ) {
                         Icon(Icons.Default.Stop, contentDescription = null)
                         Spacer(Modifier.width(4.dp))
-                        Text("STOP", style = MaterialTheme.typography.titleMedium, maxLines = 1)
+                        Text(
+                            text = if (strings.isSpanish) "Parar Crono" else "Stop Timer",
+                            style = MaterialTheme.typography.titleMedium,
+                            maxLines = 1
+                        )
                     }
                 }
             }
@@ -702,8 +712,8 @@ private fun PilotTrackRoomTab(
                             if (strings.isSpanish) "Sesión controlada por Dirección (${room.sessionPhase.name}) — organización de manga bloqueada hasta finalizar o STOP de Dirección."
                             else "Session controlled by Director (${room.sessionPhase.name}) — group heat setup locked until Director stops."
                         } else {
-                            if (strings.isSpanish) "Sesión en curso (${room.sessionPhase.name}) — pulsa STOP antes de organizar otra manga."
-                            else "Session active (${room.sessionPhase.name}) — press STOP before organizing another heat."
+                            if (strings.isSpanish) "Sesión en curso (${room.sessionPhase.name}) — pulsa FIN MANGA arriba antes de organizar otra."
+                            else "Session active (${room.sessionPhase.name}) — tap END HEAT above before starting another."
                         },
                         style = MaterialTheme.typography.labelMedium,
                         color = mx.racingRed,
@@ -793,26 +803,6 @@ private fun PilotTrackRoomTab(
                         if (strings.isSpanish) "Lanzar Manga Ya (${room.heatDurationSec / 60} min)"
                         else "Start Group Heat Now (${room.heatDurationSec / 60} min)"
                     )
-                }
-                if (lockedByActiveSession && room.friendlyModeActive) {
-                    Mx3dButton(
-                        onClick = { viewModel.stopSession(isDirector = false) },
-                        containerColor = mx.racingRed,
-                        contentColor = Color.White,
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .testTag("friendly_stop_session_button")
-                    ) {
-                        Icon(Icons.Default.Stop, contentDescription = null)
-                        Spacer(Modifier.width(6.dp))
-                        Text(
-                            if (room.sessionPhase == SessionPhase.WARMUP) {
-                                "STOP WARM-UP"
-                            } else {
-                                if (strings.isSpanish) "STOP CARRERA" else "STOP RACE"
-                            }
-                        )
-                    }
                 }
                 Mx3dButton(
                     onClick = { viewModel.spinCrazyMxRoulette() },

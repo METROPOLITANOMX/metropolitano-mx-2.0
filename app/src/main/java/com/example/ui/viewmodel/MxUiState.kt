@@ -67,6 +67,7 @@ data class MxUiState(
     val lastCaptureFeedbackAtMs: Long = 0L,
     val lastCaptureOk: Boolean = true,
     val directorLanEndpoint: String? = null,
+    val activeDirectorLanIp: String? = null,
     val antennaVoiceEnabled: Boolean = true,
     val paAudioMuted: Boolean = false,
     val directorUnlocked: Boolean = false,

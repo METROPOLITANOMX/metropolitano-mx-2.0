@@ -53,13 +53,14 @@ class FirebaseRtdbClient {
     var activeBaseUrl: String = PRIMARY_BASE_URL
         private set
 
+    @Volatile
+    private var lastFallbackProbeMonoMs: Long = 0L
+
+    @Volatile
+    private var fallbacksReturned404: Boolean = false
+
     private fun orderedCandidateUrls(): List<String> =
         listOf(activeBaseUrl) + CANDIDATE_BASE_URLS.filter { it != activeBaseUrl }
-
-    private fun nextCandidateBaseUrl(): String {
-        val idx = CANDIDATE_BASE_URLS.indexOf(activeBaseUrl)
-        return CANDIDATE_BASE_URLS[(idx + 1) % CANDIDATE_BASE_URLS.size]
-    }
 
     private fun buildUrl(base: String, path: String): String {
         val clean = path.trimStart('/').split("/").joinToString("/") { android.net.Uri.encode(it) }
@@ -153,31 +154,60 @@ class FirebaseRtdbClient {
         serverTimeOffsetMs
     }
 
+    private fun formatHttpError(verb: String, path: String, code: Int): String =
+        if (code == 401 || code == 403) {
+            "HTTP $code (Reglas Firebase RTDB bloqueadas o caducadas)"
+        } else {
+            "$verb $path HTTP $code"
+        }
+
     private fun executeWithFailover(buildRequest: (String) -> Request): okhttp3.Response {
-        val candidates = orderedCandidateUrls()
+        val nowMono = SystemClock.elapsedRealtime()
+        val shouldSkipDeadFallbacks = fallbacksReturned404 && (nowMono - lastFallbackProbeMonoMs) < 60_000L
+        val candidates = if (shouldSkipDeadFallbacks) listOf(activeBaseUrl) else orderedCandidateUrls()
+        var authDeniedResp: okhttp3.Response? = null
         var lastResp: okhttp3.Response? = null
+        var saw404OnFallback = false
+
         for ((idx, base) in candidates.withIndex()) {
             val req = buildRequest(base)
             val resp = http.newCall(req).execute()
             if (resp.isSuccessful) {
+                authDeniedResp?.close()
                 lastResp?.close()
                 activeBaseUrl = base
+                fallbacksReturned404 = false
                 return resp
             }
-            val shouldFailover = (resp.code == 401 || resp.code == 403 || resp.code == 404) && idx < candidates.lastIndex
-            if (shouldFailover) {
+            if (base != PRIMARY_BASE_URL && resp.code == 404) {
+                saw404OnFallback = true
+            }
+            if ((resp.code == 401 || resp.code == 403) && authDeniedResp == null) {
+                authDeniedResp = resp
+            } else {
                 lastResp?.close()
                 lastResp = resp
-                continue
             }
+            val shouldFailover = (resp.code == 401 || resp.code == 403 || resp.code == 404) && idx < candidates.lastIndex
+            if (!shouldFailover) {
+                break
+            }
+        }
+        if (candidates.size > 1) {
+            lastFallbackProbeMonoMs = nowMono
+            if (saw404OnFallback) fallbacksReturned404 = true
+        }
+        // Prefer returning the 401/403 response over an unused fallback 404 so UI error state never flickers
+        if (authDeniedResp != null) {
             lastResp?.close()
-            return resp
+            return authDeniedResp
         }
         return lastResp ?: http.newCall(buildRequest(activeBaseUrl)).execute()
     }
 
     fun observePathEvents(path: String): Flow<String> = flow {
         while (currentCoroutineContext().isActive) {
+            var authOrRuleBlocked = false
             try {
                 val req = Request.Builder()
                     .url(buildUrl(activeBaseUrl, path))
@@ -186,6 +216,7 @@ class FirebaseRtdbClient {
                 streamHttp.newCall(req).execute().use { resp ->
                     if (resp.isSuccessful) {
                         isOnline = true
+                        lastNetworkError = null
                         val bodyStream = resp.body?.byteStream()
                         if (bodyStream != null) {
                             val reader = BufferedReader(InputStreamReader(bodyStream))
@@ -203,15 +234,20 @@ class FirebaseRtdbClient {
                             }
                         }
                     } else if (resp.code == 401 || resp.code == 403 || resp.code == 404) {
-                        lastNetworkError = "SSE $path HTTP ${resp.code} (Reglas Firebase RTDB bloqueadas o caducadas)"
-                        activeBaseUrl = nextCandidateBaseUrl()
+                        isOnline = false
+                        authOrRuleBlocked = true
+                        if (resp.code == 401 || resp.code == 403) {
+                            lastNetworkError = formatHttpError("SSE", path, resp.code)
+                        } else {
+                            activeBaseUrl = PRIMARY_BASE_URL
+                        }
                     }
                 }
             } catch (e: Exception) {
                 Log.d(TAG, "SSE stream reconnect for $path: ${e.message}")
                 isOnline = false
             }
-            delay(2000L)
+            delay(if (authOrRuleBlocked) 15_000L else 3000L)
         }
     }.flowOn(Dispatchers.IO)
 
@@ -224,10 +260,13 @@ class FirebaseRtdbClient {
                 isOnline = resp.isSuccessful
                 if (!resp.isSuccessful || raw.isNullOrBlank() || raw == "null") {
                     if (!resp.isSuccessful) {
-                        lastNetworkError = if (resp.code == 401) "GET $path HTTP 401 (Reglas RTDB bloqueadas)" else "GET $path HTTP ${resp.code}"
+                        lastNetworkError = formatHttpError("GET", path, resp.code)
+                    } else {
+                        lastNetworkError = null
                     }
                     return@withContext null
                 }
+                lastNetworkError = null
                 try {
                     moshi.adapter(T::class.java).lenient().fromJson(raw)
                 } catch (e: Exception) {
@@ -251,8 +290,14 @@ class FirebaseRtdbClient {
                 val raw = resp.body?.string()
                 isOnline = resp.isSuccessful
                 if (!resp.isSuccessful || raw.isNullOrBlank() || raw == "null") {
+                    if (!resp.isSuccessful) {
+                        lastNetworkError = formatHttpError("GET", path, resp.code)
+                    } else {
+                        lastNetworkError = null
+                    }
                     return@withContext emptyMap()
                 }
+                lastNetworkError = null
                 val adapter = moshi.adapter(T::class.java).lenient()
                 val result = linkedMapOf<String, T>()
                 val trimmed = raw.trim()
@@ -378,7 +423,11 @@ class FirebaseRtdbClient {
             }.use { resp ->
                 val raw = resp.body?.string()
                 isOnline = resp.isSuccessful
-                if (!resp.isSuccessful) return@withContext null
+                if (!resp.isSuccessful) {
+                    lastNetworkError = formatHttpError("GET", "config", resp.code)
+                    return@withContext null
+                }
+                lastNetworkError = null
                 if (raw.isNullOrBlank() || raw == "null") return@withContext GlobalConfig()
                 val obj = JSONObject(raw)
                 val regOpen = obj.optBoolean("registrationOpen", true)
@@ -504,8 +553,12 @@ class FirebaseRtdbClient {
                 val raw = resp.body?.string()
                 isOnline = resp.isSuccessful
                 if (!resp.isSuccessful || raw.isNullOrBlank() || raw == "null") {
+                    if (!resp.isSuccessful) {
+                        lastNetworkError = formatHttpError("GET", "antennas/$circuitId", resp.code)
+                    }
                     return@withContext merged
                 }
+                lastNetworkError = null
                 val root = JSONObject(raw)
                 val keys = root.keys()
                 while (keys.hasNext()) {
